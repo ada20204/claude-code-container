@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bash -n "$root/bin/claude-code-dev" "$root/install.sh"
+
+if grep -RInE --exclude-dir=.git \
+  '(/Users/|10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|sk-[A-Za-z0-9]+|BEGIN OPENSSH PRIVATE KEY)' \
+  "$root/bin" "$root/Dockerfile" "$root/install.sh"; then
+  printf 'private host data or credentials found\n' >&2
+  exit 1
+fi
+
+help="$("$root/bin/claude-code-dev" help)"
+for command in install reinstall uninstall clear shell run doctor; do
+  grep -q "  $command" <<<"$help"
+done
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+HOME="$tmp/home" PREFIX="$tmp/prefix" XDG_DATA_HOME="$tmp/data" "$root/install.sh" >/dev/null
+test -x "$tmp/prefix/bin/claude-code-dev"
+test -f "$tmp/data/claude-code-dev/Dockerfile"
+
+mkdir -p "$tmp/function-home"
+printf 'export USER_SETTING=keep\n' > "$tmp/function-home/.bashrc"
+(
+  export HOME="$tmp/function-home"
+  export CLAUDE_CODE_DEV_SHELL_RC="$HOME/.bashrc"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-dev"
+  install_alias
+  install_alias
+  test "$(grep -c '^# claude-code-dev: shell alias begin$' "$HOME/.bashrc")" -eq 1
+  remove_alias
+  grep -q '^export USER_SETTING=keep$' "$HOME/.bashrc"
+  ! grep -q 'claude-code-dev: shell alias' "$HOME/.bashrc"
+)
+
+mkdir -p "$tmp/conflict-home"
+printf "alias claude-dev='user-command'\n" > "$tmp/conflict-home/.bashrc"
+if (
+  export HOME="$tmp/conflict-home"
+  export CLAUDE_CODE_DEV_SHELL_RC="$HOME/.bashrc"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-dev"
+  install_alias
+) 2>/dev/null; then
+  printf 'conflicting alias was not rejected\n' >&2
+  exit 1
+fi
+grep -q "alias claude-dev='user-command'" "$tmp/conflict-home/.bashrc"
+
+printf 'Static and installer tests passed.\n'

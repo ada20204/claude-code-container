@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_name=claude-code-dev
+image="${CLAUDE_CODE_DEV_IMAGE:-claude-code-dev:latest}"
+home_volume="${CLAUDE_CODE_DEV_HOME_VOLUME:-claude-code-dev-home}"
+host_work="${CLAUDE_CODE_DEV_WORKSPACE:-$HOME/work}"
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+dockerfile="${CLAUDE_CODE_DEV_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
+timezone="${CLAUDE_CODE_DEV_TIMEZONE:-UTC}"
+claude_version="${CLAUDE_CODE_DEV_CLAUDE_VERSION:-2.1.228}"
+build_network="${CLAUDE_CODE_DEV_BUILD_NETWORK:-}"
+debian_mirror="${CLAUDE_CODE_DEV_DEBIAN_MIRROR:-}"
+debian_security_mirror="${CLAUDE_CODE_DEV_DEBIAN_SECURITY_MIRROR:-}"
+shell_alias=claude-dev
+shell_rc="${CLAUDE_CODE_DEV_SHELL_RC:-$HOME/.bashrc}"
+host_user="$(id -un)"
+host_key_comment="claude-code-dev:${home_volume}"
+container_label="io.github.claude-code-dev.home-volume=$home_volume"
+
+usage() {
+  cat <<'EOF'
+Usage: claude-code-dev <command> [ARG...]
+
+Commands:
+  install      Build and initialize the environment, then install the claude-dev alias.
+  reinstall    Rebuild and reinstall while preserving persistent Home data.
+  uninstall    Remove runtime integration and image while preserving Home data.
+  clear        Remove the runtime and all persistent Home data (requires confirmation).
+  shell        Enter the persistent Claude Code environment.
+  run COMMAND  Run a command in a disposable container.
+  doctor       Check prerequisites and current state.
+  help         Show this help.
+EOF
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+check_platform() {
+  [[ "$(uname -s)" == Linux ]] || die 'only Linux hosts are supported'
+  require_command docker
+  docker info >/dev/null 2>&1 || die 'Docker daemon is unavailable to the current user'
+}
+
+build_image() {
+  local target_image="${1:-$image}"
+  local network_args=()
+  [[ -f "$dockerfile" ]] || die "Dockerfile does not exist: $dockerfile"
+  if [[ -n "$build_network" ]]; then
+    network_args=(--network "$build_network")
+  fi
+  local mirror_args=()
+  [[ -n "$debian_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
+  [[ -n "$debian_security_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
+  docker build "${network_args[@]}" \
+    "${mirror_args[@]}" \
+    --build-arg "DEV_USER=$host_user" \
+    --build-arg "DEV_UID=$(id -u)" \
+    --build-arg "DEV_GID=$(id -g)" \
+    --build-arg "DEV_TZ=$timezone" \
+    --build-arg "TARGET_CLAUDE_VERSION=$claude_version" \
+    --tag "$target_image" \
+    - < "$dockerfile"
+}
+
+require_workspace() {
+  [[ -d "$host_work" ]] || die "workspace does not exist: $host_work"
+}
+
+bridge_subnet() {
+  local subnet
+  subnet="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Subnet}}')"
+  [[ "$subnet" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] || \
+    die "unexpected Docker bridge subnet: $subnet"
+  printf '%s\n' "$subnet"
+}
+
+initialize_home() {
+  docker run --rm --interactive \
+    --volume "$home_volume:/home/$host_user" \
+    "$image" bash -s -- "$host_user" "$host_key_comment" <<'CONTAINER_INIT'
+set -euo pipefail
+
+host_user="$1"
+key_comment="$2"
+key="$HOME/.ssh/id_ed25519_host"
+config="$HOME/.ssh/config"
+
+install -d -m 700 "$HOME/.ssh" "$HOME/.claude"
+if [[ ! -f "$key" ]]; then
+  ssh-keygen -q -t ed25519 -N '' -C "$key_comment" -f "$key"
+fi
+if [[ "$(awk '{print $3}' "$key.pub")" != "$key_comment" ]]; then
+  ssh-keygen -q -c -C "$key_comment" -P '' -f "$key" >/dev/null
+fi
+
+python3 - "$config" "$host_user" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+host_user = sys.argv[2]
+start = "# claude-code-dev: host access begin"
+end = "# claude-code-dev: host access end"
+text = path.read_text() if path.exists() else ""
+if start in text or end in text:
+    before, separator, remainder = text.partition(start)
+    if not separator or end not in remainder:
+        raise SystemExit(f"Malformed claude-code-dev block in {path}")
+    _, _, after = remainder.partition(end)
+    text = (before.rstrip() + "\n" + after.lstrip()).strip()
+for line in text.splitlines():
+    if line.strip().split() == ["Host", "host"]:
+        raise SystemExit(f"Conflicting Host host entry in {path}")
+
+block = f"""{start}
+Host host
+    HostName host.docker.internal
+    User {host_user}
+    IdentityFile ~/.ssh/id_ed25519_host
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+{end}"""
+path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
+PY
+
+if [[ -L "$HOME/work" ]]; then
+  [[ "$(readlink "$HOME/work")" == /workspace ]] || {
+    printf 'Conflicting symlink: %s -> %s\n' "$HOME/work" "$(readlink "$HOME/work")" >&2
+    exit 1
+  }
+elif [[ -e "$HOME/work" ]]; then
+  printf 'Conflicting path already exists: %s\n' "$HOME/work" >&2
+  exit 1
+else
+  ln -s /workspace "$HOME/work"
+fi
+if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
+  cat > "$HOME/.claude/CLAUDE.md" <<EOF
+# Claude Code Development Container
+
+## Environment
+
+- Home and default directory: \`/home/$host_user\`.
+- Host workspace: \`$HOME/work\`, linked to \`/workspace\`.
+- Home data persists in a Docker volume; other container paths are disposable.
+- Use \`ssh host\` for restricted, key-based access to the Docker host.
+
+## Operating Rules
+
+1. Keep project work under \`~/work\` or \`/workspace\`.
+2. Install user-level tools under \`~/.local\` so they persist.
+3. Never copy host private keys into the container.
+EOF
+  chmod 600 "$HOME/.claude/CLAUDE.md"
+fi
+
+chmod 600 "$config" "$key"
+chmod 644 "$key.pub"
+cat "$key.pub"
+CONTAINER_INIT
+}
+
+install_host_authorization() {
+  local subnet public_key authorized_line stage backup
+  subnet="$(bridge_subnet)"
+  public_key="$(initialize_home)"
+  [[ "$public_key" == 'ssh-ed25519 '* ]] || die 'container public key has an unexpected format'
+
+  install -d -m 700 "$HOME/.ssh"
+  touch "$HOME/.ssh/authorized_keys"
+  chmod 600 "$HOME/.ssh/authorized_keys"
+  authorized_line="from=\"$subnet\",no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc $public_key"
+  if ! grep -Fqx "$authorized_line" "$HOME/.ssh/authorized_keys"; then
+    backup="$HOME/.ssh/authorized_keys.backup-before-$app_name-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    cp -p "$HOME/.ssh/authorized_keys" "$backup"
+    stage="$(mktemp "$HOME/.ssh/authorized_keys.$app_name.XXXXXX")"
+    trap 'rm -f "$stage"' EXIT
+    awk -v comment="$host_key_comment" '$NF != comment' "$HOME/.ssh/authorized_keys" > "$stage"
+    printf '%s\n' "$authorized_line" >> "$stage"
+    chmod 600 "$stage"
+    mv "$stage" "$HOME/.ssh/authorized_keys"
+    trap - EXIT
+  fi
+}
+
+initialize_runtime() {
+  require_workspace
+  docker image inspect "$image" >/dev/null 2>&1 || \
+    die "Docker image does not exist: $image; run claude-code-dev install"
+  if ! docker volume inspect "$home_volume" >/dev/null 2>&1; then
+    docker volume create \
+      --label io.github.claude-code-dev.purpose=persistent-home \
+      "$home_volume" >/dev/null
+  fi
+  install_host_authorization
+  verify_host_ssh
+}
+
+verify_host_ssh() {
+  docker run --rm \
+    --add-host host.docker.internal:host-gateway \
+    --volume "$home_volume:/home/$host_user" \
+    "$image" ssh -o BatchMode=yes -o ConnectTimeout=8 host true || \
+    die 'container-to-host SSH verification failed; confirm that the host SSH server is reachable'
+}
+
+install_alias() {
+  local start='# claude-code-dev: shell alias begin'
+  local end='# claude-code-dev: shell alias end'
+  touch "$shell_rc"
+  python3 - "$shell_rc" "$start" "$end" "$shell_alias" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+start, end, alias_name = sys.argv[2:]
+text = path.read_text()
+if start in text or end in text:
+    before, separator, remainder = text.partition(start)
+    if not separator or end not in remainder:
+        raise SystemExit(f"Malformed claude-code-dev alias block in {path}")
+    _, _, after = remainder.partition(end)
+    text = (before.rstrip() + "\n" + after.lstrip()).strip()
+for line in text.splitlines():
+    if line.strip().startswith(f"alias {alias_name}="):
+        raise SystemExit(f"Conflicting alias {alias_name} in {path}")
+block = f"{start}\nalias {alias_name}='claude-code-dev shell'\n{end}"
+path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
+PY
+}
+
+remove_alias() {
+  local start='# claude-code-dev: shell alias begin'
+  local end='# claude-code-dev: shell alias end'
+  [[ -f "$shell_rc" ]] || return 0
+  python3 - "$shell_rc" "$start" "$end" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+start, end = sys.argv[2:]
+text = path.read_text()
+if start not in text and end not in text:
+    raise SystemExit(0)
+before, separator, remainder = text.partition(start)
+if not separator or end not in remainder:
+    raise SystemExit(f"Malformed claude-code-dev alias block in {path}")
+_, _, after = remainder.partition(end)
+text = (before.rstrip() + "\n" + after.lstrip()).rstrip()
+path.write_text(text + ("\n" if text else ""))
+PY
+}
+
+remove_host_authorization() {
+  local file stage backup
+  file="$HOME/.ssh/authorized_keys"
+  [[ -f "$file" ]] || return 0
+  if awk -v comment="$host_key_comment" '$NF == comment { found=1 } END { exit !found }' "$file"; then
+    backup="$file.backup-before-$app_name-uninstall-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    cp -p "$file" "$backup"
+    stage="$(mktemp "$file.$app_name.XXXXXX")"
+    trap 'rm -f "$stage"' EXIT
+    awk -v comment="$host_key_comment" '$NF != comment' "$file" > "$stage"
+    chmod 600 "$stage"
+    mv "$stage" "$file"
+    trap - EXIT
+  fi
+}
+
+remove_runtime() {
+  local container_ids=()
+  mapfile -t container_ids < <(docker ps -aq --filter "label=$container_label")
+  if ((${#container_ids[@]})); then
+    docker rm -f "${container_ids[@]}" >/dev/null
+  fi
+  docker image inspect "$image" >/dev/null 2>&1 && docker image rm "$image" >/dev/null
+  remove_alias
+  remove_host_authorization
+}
+
+confirm_clear() {
+  [[ "${1:-}" == --yes ]] && return 0
+  if [[ ! -t 0 ]]; then
+    die "clear permanently removes $home_volume; rerun with --yes"
+  fi
+  local answer
+  printf 'Permanently remove volume %s and all Claude login/configuration data? [y/N] ' "$home_volume" >&2
+  read -r answer
+  [[ "$answer" =~ ^[yY]$ ]] || { printf 'Clear cancelled.\n'; exit 0; }
+}
+
+run_container() {
+  local tty=()
+  [[ -t 0 && -t 1 ]] && tty=(-it)
+  exec docker run --rm "${tty[@]}" \
+    --label "$container_label" \
+    --add-host host.docker.internal:host-gateway \
+    --workdir "/home/$host_user" \
+    --volume "$home_volume:/home/$host_user" \
+    --volume "$host_work:/workspace" \
+    "$image" "$@"
+}
+
+doctor() {
+  check_platform
+  printf 'Docker: ok\n'
+  printf 'Dockerfile: %s\n' "$dockerfile"
+  printf 'Workspace: %s\n' "$host_work"
+  printf 'Build network: %s\n' "${build_network:-default}"
+  docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"
+  docker volume inspect "$home_volume" >/dev/null 2>&1 && printf 'Home volume: present (%s)\n' "$home_volume" || printf 'Home volume: absent (%s)\n' "$home_volume"
+}
+
+main() {
+  local command="${1:-help}"
+  shift || true
+  case "$command" in
+  install)
+    check_platform
+    build_image
+    initialize_runtime
+    install_alias
+    printf 'Installed. Reload your shell, then run: %s\n' "$shell_alias"
+    ;;
+  reinstall)
+    check_platform
+    temporary_image="${image}-reinstall-$$"
+    trap 'docker image rm "$temporary_image" >/dev/null 2>&1 || true' EXIT
+    build_image "$temporary_image"
+    remove_runtime
+    docker tag "$temporary_image" "$image"
+    docker image rm "$temporary_image" >/dev/null
+    trap - EXIT
+    initialize_runtime
+    install_alias
+    printf 'Reinstalled. Persistent Home data was preserved.\n'
+    ;;
+  uninstall)
+    (($# == 0)) || die 'uninstall does not accept arguments'
+    check_platform
+    remove_runtime
+    printf 'Uninstalled. Persistent Home volume preserved: %s\n' "$home_volume"
+    ;;
+  clear)
+    (($# <= 1)) || die 'usage: claude-code-dev clear [--yes]'
+    [[ $# == 0 || "$1" == --yes ]] || die 'usage: claude-code-dev clear [--yes]'
+    check_platform
+    confirm_clear "${1:-}"
+    remove_runtime
+    docker volume inspect "$home_volume" >/dev/null 2>&1 && docker volume rm "$home_volume" >/dev/null
+    printf 'Cleared image, Home data, alias, host authorization, and related containers.\n'
+    ;;
+  shell)
+    check_platform
+    initialize_runtime
+    run_container bash
+    ;;
+  run)
+    (($#)) || die 'run requires a command'
+    check_platform
+    initialize_runtime
+    run_container "$@"
+    ;;
+  doctor)
+    (($# == 0)) || die 'doctor does not accept arguments'
+    doctor
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+    *)
+      printf 'error: unknown command: %s\n' "$command" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
