@@ -71,7 +71,7 @@ alias, host authorization, and related containers while preserving Home data.
 | `CLAUDE_CODE_DEV_WORKSPACE` | `~/work` | Host project directory |
 | `CLAUDE_CODE_DEV_DOCKERFILE` | `~/.local/share/claude-code-dev/Dockerfile` | Build input |
 | `CLAUDE_CODE_DEV_TIMEZONE` | `UTC` | Container time zone |
-| `CLAUDE_CODE_DEV_CLAUDE_VERSION` | `2.1.228` | Reproducible Claude Code baseline |
+| `CLAUDE_CODE_DEV_CLAUDE_VERSION` | `latest` | Claude Code version; set an exact version for reproducible builds |
 | `CLAUDE_CODE_DEV_BUILD_NETWORK` | unset | Optional Docker build network, such as `host` |
 | `CLAUDE_CODE_DEV_BASE_IMAGE` | Pinned official Node image | Optional registry mirror while preserving a pinned digest |
 | `CLAUDE_CODE_DEV_DEBIAN_MIRROR` | Debian official | Optional Debian package mirror |
