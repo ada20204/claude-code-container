@@ -129,11 +129,10 @@ RUN set -eux; \
         *) echo "Invalid CLAUDE_BINARY_SEED: ${CLAUDE_BINARY_SEED}" >&2; exit 1 ;; \
     esac; \
     ln -s "$claude_dir/$claude_version" "$HOME/.local/bin/claude"; \
-    rm -f /tmp/claude-seed; \
     claude --version
 
 USER root
-RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig
+RUN rm -f /tmp/claude-seed && ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig
 USER ${DEV_USER}
 
 CMD ["bash"]
