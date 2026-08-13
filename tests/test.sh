@@ -25,6 +25,7 @@ done
 
 grep -Fq 'ARG BASE_IMAGE=' "$root/Dockerfile"
 grep -Fq 'ARG DEV_HOME=' "$root/Dockerfile"
+grep -Fq 'ARG CLAUDE_BINARY_SEED=0' "$root/Dockerfile"
 grep -Fq 'RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig' "$root/Dockerfile"
 grep -Fq 'https://downloads.claude.ai/claude-code-releases' "$root/Dockerfile"
 test "$(grep -Fc -- '--http1.1' "$root/Dockerfile")" -ge 3
@@ -36,6 +37,7 @@ grep -Fq "printf '%s\\n' '127.0.0.1/32'" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_MOUNTS' "$root/bin/claude-code-container"
+grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_BINARY' "$root/bin/claude-code-container"
 grep -Fq "container_home=\"/Users/\$host_user\"" "$root/bin/claude-code-container"
 grep -Fq "migrated_target=\"\$HOME/.local/share/claude/versions/\$claude_version\"" "$root/bin/claude-code-container"
 if grep -Fq 'mapfile' "$root/bin/claude-code-container"; then
@@ -105,6 +107,30 @@ mkdir -p "$tmp/custom-mount-home/data" "$tmp/custom-mount-home/client"
     printf 'non-normalized mount target was not rejected\n' >&2
     exit 1
   fi
+)
+
+mkdir -p "$tmp/seed-home"
+seed_binary="$tmp/seed-home/claude"
+printf '#!/usr/bin/env sh\nprintf "2.0.0 (Claude Code)\\n"\n' > "$seed_binary"
+chmod 755 "$seed_binary"
+(
+  export HOME="$tmp/seed-home"
+  export CLAUDE_CODE_CONTAINER_CLAUDE_BINARY="$seed_binary"
+  export CLAUDE_CODE_CONTAINER_DOCKERFILE="$root/Dockerfile"
+  export TMPDIR="$tmp"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-container"
+  docker() {
+    local arg context
+    for arg in "$@"; do
+      context="$arg"
+    done
+    test -f "$context/Dockerfile"
+    test -s "$context/claude-seed"
+    grep -Fqx -- '--build-arg' <(printf '%s\n' "$@")
+    grep -Fqx -- 'CLAUDE_BINARY_SEED=1' <(printf '%s\n' "$@")
+  }
+  build_image test-image
 )
 
 mkdir -p "$tmp/conflict-home"

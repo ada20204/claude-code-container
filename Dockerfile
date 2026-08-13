@@ -9,6 +9,7 @@ ARG DEV_TZ=UTC
 ARG TARGET_NODE_VERSION=24.18.1
 ARG TARGET_PNPM_VERSION=11.21.0
 ARG TARGET_CLAUDE_VERSION=latest
+ARG CLAUDE_BINARY_SEED=0
 ARG PNPM_SHA256=87237d37eadb79dc626a0576eb3a52d23d70422c323ae5e00fc05c91f4323780
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
@@ -75,41 +76,57 @@ ENV USER=${DEV_USER} LOGNAME=${DEV_USER}
 USER ${DEV_USER}
 WORKDIR ${HOME}
 
+COPY claude-seed /tmp/claude-seed
 RUN set -eux; \
-    release_base=https://downloads.claude.ai/claude-code-releases; \
-    case "${TARGET_CLAUDE_VERSION}" in \
-        latest|stable) \
-            claude_version="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 \
-                --max-time 120 "$release_base/${TARGET_CLAUDE_VERSION}")" \
-            ;; \
-        *) claude_version="${TARGET_CLAUDE_VERSION}" ;; \
-    esac; \
-    case "$claude_version" in \
-        [0-9]*.[0-9]*.[0-9]*) ;; \
-        *) echo "Invalid Claude Code version: $claude_version" >&2; exit 1 ;; \
-    esac; \
-    case "$(dpkg --print-architecture)" in \
-        amd64) claude_platform=linux-x64 ;; \
-        arm64) claude_platform=linux-arm64 ;; \
-        *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
-    esac; \
-    manifest="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 --max-time 120 \
-        "$release_base/$claude_version/manifest.json")"; \
-    claude_sha256="$(printf '%s' "$manifest" | jq -r \
-        --arg platform "$claude_platform" '.platforms[$platform].checksum // empty')"; \
-    case "$claude_sha256" in \
-        [0-9a-f][0-9a-f]*) test "${#claude_sha256}" -eq 64 ;; \
-        *) echo "Missing checksum for $claude_platform" >&2; exit 1 ;; \
-    esac; \
     claude_dir="$HOME/.local/share/claude/versions"; \
     install -d "$claude_dir"; \
-    curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 --max-time 1200 \
-        --speed-time 60 --speed-limit 1024 \
-        -o "$claude_dir/$claude_version" \
-        "$release_base/$claude_version/$claude_platform/claude"; \
-    printf '%s  %s\n' "$claude_sha256" "$claude_dir/$claude_version" | sha256sum -c -; \
-    chmod 755 "$claude_dir/$claude_version"; \
+    case "${CLAUDE_BINARY_SEED}" in \
+        0) \
+            release_base=https://downloads.claude.ai/claude-code-releases; \
+            case "${TARGET_CLAUDE_VERSION}" in \
+                latest|stable) \
+                    claude_version="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 \
+                        --max-time 120 "$release_base/${TARGET_CLAUDE_VERSION}")" \
+                    ;; \
+                *) claude_version="${TARGET_CLAUDE_VERSION}" ;; \
+            esac; \
+            case "$claude_version" in \
+                [0-9]*.[0-9]*.[0-9]*) ;; \
+                *) echo "Invalid Claude Code version: $claude_version" >&2; exit 1 ;; \
+            esac; \
+            case "$(dpkg --print-architecture)" in \
+                amd64) claude_platform=linux-x64 ;; \
+                arm64) claude_platform=linux-arm64 ;; \
+                *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
+            esac; \
+            manifest="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 --max-time 120 \
+                "$release_base/$claude_version/manifest.json")"; \
+            claude_sha256="$(printf '%s' "$manifest" | jq -r \
+                --arg platform "$claude_platform" '.platforms[$platform].checksum // empty')"; \
+            case "$claude_sha256" in \
+                [0-9a-f][0-9a-f]*) test "${#claude_sha256}" -eq 64 ;; \
+                *) echo "Missing checksum for $claude_platform" >&2; exit 1 ;; \
+            esac; \
+            curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 --max-time 1200 \
+                --speed-time 60 --speed-limit 1024 \
+                -o "$claude_dir/$claude_version" \
+                "$release_base/$claude_version/$claude_platform/claude"; \
+            printf '%s  %s\n' "$claude_sha256" "$claude_dir/$claude_version" | sha256sum -c -; \
+            chmod 755 "$claude_dir/$claude_version" \
+            ;; \
+        1) \
+            test -s /tmp/claude-seed; \
+            claude_version="$(/tmp/claude-seed --version | awk 'NR == 1 { print $1 }')"; \
+            case "$claude_version" in \
+                [0-9]*.[0-9]*.[0-9]*) ;; \
+                *) echo "Invalid Claude Code seed version: $claude_version" >&2; exit 1 ;; \
+            esac; \
+            install -m 755 /tmp/claude-seed "$claude_dir/$claude_version" \
+            ;; \
+        *) echo "Invalid CLAUDE_BINARY_SEED: ${CLAUDE_BINARY_SEED}" >&2; exit 1 ;; \
+    esac; \
     ln -s "$claude_dir/$claude_version" "$HOME/.local/bin/claude"; \
+    rm -f /tmp/claude-seed; \
     claude --version
 
 USER root

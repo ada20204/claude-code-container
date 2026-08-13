@@ -16,6 +16,7 @@ data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 dockerfile="${CLAUDE_CODE_CONTAINER_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
 timezone="${CLAUDE_CODE_CONTAINER_TIMEZONE:-UTC}"
 claude_version="${CLAUDE_CODE_CONTAINER_CLAUDE_VERSION:-latest}"
+claude_binary="${CLAUDE_CODE_CONTAINER_CLAUDE_BINARY:-}"
 build_network="${CLAUDE_CODE_CONTAINER_BUILD_NETWORK:-}"
 base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
@@ -85,14 +86,28 @@ check_platform() {
 build_image() {
   local target_image="${1:-$image}"
   local build_args=(build)
+  local build_context build_status
   [[ -f "$dockerfile" ]] || die "Dockerfile does not exist: $dockerfile"
+  if [[ -n "$claude_binary" ]]; then
+    [[ "$claude_binary" == /* ]] || die 'CLAUDE_CODE_CONTAINER_CLAUDE_BINARY must be an absolute path'
+    [[ -f "$claude_binary" && -x "$claude_binary" ]] || \
+      die "Claude binary seed is not an executable file: $claude_binary"
+  fi
+  build_context="$(mktemp -d "${TMPDIR:-/tmp}/${app_name}.build.XXXXXX")" || \
+    die 'could not create Docker build context'
+  cp "$dockerfile" "$build_context/Dockerfile"
+  : > "$build_context/claude-seed"
+  if [[ -n "$claude_binary" ]]; then
+    cp "$claude_binary" "$build_context/claude-seed"
+    build_args+=(--build-arg 'CLAUDE_BINARY_SEED=1')
+  fi
   if [[ -n "$build_network" ]]; then
     build_args+=(--network "$build_network")
   fi
   [[ -n "$base_image" ]] && build_args+=(--build-arg "BASE_IMAGE=$base_image")
   [[ -n "$debian_mirror" ]] && build_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
   [[ -n "$debian_security_mirror" ]] && build_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
-  docker "${build_args[@]}" \
+  if docker "${build_args[@]}" \
     --build-arg "DEV_USER=$host_user" \
     --build-arg "DEV_UID=$container_uid" \
     --build-arg "DEV_GID=$container_gid" \
@@ -100,7 +115,14 @@ build_image() {
     --build-arg "DEV_TZ=$timezone" \
     --build-arg "TARGET_CLAUDE_VERSION=$claude_version" \
     --tag "$target_image" \
-    - < "$dockerfile"
+    --file "$build_context/Dockerfile" \
+    "$build_context"; then
+    build_status=0
+  else
+    build_status=$?
+  fi
+  rm -rf "$build_context"
+  return "$build_status"
 }
 
 require_workspace() {
@@ -494,6 +516,7 @@ doctor() {
   printf 'Claude projects: %s\n' "$host_claude_projects"
   printf 'Extra Home directories: %s\n' "${extra_home_dirs:-none}"
   printf 'Custom mounts: %s\n' "${custom_mounts:-none}"
+  printf 'Claude binary seed: %s\n' "${claude_binary:-none}"
   printf 'Build network: %s\n' "${build_network:-default}"
   printf 'Base image: %s\n' "${base_image:-Dockerfile default}"
   docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"

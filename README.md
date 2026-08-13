@@ -166,6 +166,7 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_DOCKERFILE` | `~/.local/share/claude-code-container/Dockerfile` | Build input |
 | `CLAUDE_CODE_CONTAINER_TIMEZONE` | `UTC` | Container time zone |
 | `CLAUDE_CODE_CONTAINER_CLAUDE_VERSION` | `latest` | Claude Code release or exact version |
+| `CLAUDE_CODE_CONTAINER_CLAUDE_BINARY` | unset | Trusted absolute path to a local Claude Code binary used only at build time |
 | `CLAUDE_CODE_CONTAINER_BUILD_NETWORK` | unset | Optional Docker build network |
 | `CLAUDE_CODE_CONTAINER_BASE_IMAGE` | pinned official Node image | Registry mirror with the same digest |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR` | Debian official | Package mirror |
@@ -184,6 +185,19 @@ export CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR='https://mirror.example/debi
 
 claude-code-container install
 ```
+
+When the official release host is unavailable or rate-limited, an existing
+trusted Claude Code binary can seed the image without being mounted at runtime:
+
+```bash
+export CLAUDE_CODE_CONTAINER_CLAUDE_BINARY="$(command -v claude)"
+claude-code-container install
+```
+
+The seed is copied into a temporary build context, checked by running
+`--version`, and then stored inside the image. It bypasses the official
+download and its checksum manifest, so only use a locally trusted executable.
+Run `claude update` inside the container later to move to a newer release.
 
 Host-specific directories stay outside the public defaults. For example:
 
