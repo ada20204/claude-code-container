@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">claude-code-container architecture</title>
+  <desc id="desc">The disposable container uses a persistent Home volume, mounts the host workspace, reaches the host through a restricted SSH key, and leaves network routing to the host.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#e87835"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="560" rx="18" fill="#f7f8f5"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <text x="56" y="70" fill="#18201d" font-size="38" font-weight="760">One disposable runtime. Three deliberate host connections.</text>
+    <text x="56" y="105" fill="#56615c" font-size="20">Runtime state is replaceable; identity, projects, and routing remain outside the image.</text>
+
+    <g id="container-boundary" transform="translate(55 150)">
+      <rect width="530" height="330" rx="14" fill="#eef1ed" stroke="#9aa59f" stroke-width="2" stroke-dasharray="9 8"/>
+      <text x="24" y="40" fill="#69736f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="17">DOCKER CONTAINER · REBUILD ANY TIME</text>
+      <rect x="39" y="72" width="452" height="205" rx="12" fill="#ffffff" stroke="#7b8882" stroke-width="2"/>
+      <text x="68" y="116" fill="#18201d" font-size="27" font-weight="760">/home/&lt;host-user&gt;</text>
+      <text x="68" y="155" fill="#56615c" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="19">Claude Code + development toolbox</text>
+      <path d="M68 180H463" stroke="#d7ddd8" stroke-width="2"/>
+      <text x="68" y="216" fill="#3f4945" font-size="20">~/work</text>
+      <text x="176" y="216" fill="#e87835" font-size="20" font-weight="700">-&gt;</text>
+      <text x="215" y="216" fill="#3f4945" font-size="20">/workspace</text>
+      <text x="68" y="251" fill="#3f4945" font-size="20">ssh host</text>
+      <text x="176" y="251" fill="#e87835" font-size="20" font-weight="700">-&gt;</text>
+      <text x="215" y="251" fill="#3f4945" font-size="20">host.docker.internal</text>
+      <text x="24" y="310" fill="#69736f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16">NO HOST HOME · NO PRIVATE KEYS · NO DOCKER SOCKET</text>
+    </g>
+
+    <g id="host-resources" transform="translate(700 150)">
+      <rect x="0" y="0" width="440" height="88" rx="11" fill="#18201d"/>
+      <text x="24" y="36" fill="#ffffff" font-size="22" font-weight="760">Persistent Home volume</text>
+      <text x="24" y="65" fill="#cbd2ce" font-size="18">login, ~/.claude, ~/.local, container SSH key</text>
+
+      <rect x="0" y="118" width="440" height="88" rx="11" fill="#18201d"/>
+      <text x="24" y="154" fill="#ffffff" font-size="22" font-weight="760">Host workspace</text>
+      <text x="24" y="183" fill="#cbd2ce" font-size="18">host ~/work mounted read-write at /workspace</text>
+
+      <rect x="0" y="236" width="440" height="88" rx="11" fill="#ffffff" stroke="#7b8882" stroke-width="2"/>
+      <text x="24" y="272" fill="#18201d" font-size="22" font-weight="760">Host network policy</text>
+      <text x="24" y="301" fill="#56615c" font-size="18">Docker bridge egress; host TUN/rules decide routes</text>
+    </g>
+
+    <path d="M585 225H680" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M585 325H680" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M585 425H680" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <text x="56" y="527" fill="#69736f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16">IMAGE: disposable  ·  HOME: durable  ·  PROJECTS: host-owned  ·  NETWORK: host-governed</text>
+  </g>
+</svg>

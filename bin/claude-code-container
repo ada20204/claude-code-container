@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_name=claude-code-dev
-image="${CLAUDE_CODE_DEV_IMAGE:-claude-code-dev:latest}"
-home_volume="${CLAUDE_CODE_DEV_HOME_VOLUME:-claude-code-dev-home}"
-host_work="${CLAUDE_CODE_DEV_WORKSPACE:-$HOME/work}"
+app_name=claude-code-container
+image="${CLAUDE_CODE_CONTAINER_IMAGE:-claude-code-container:latest}"
+home_volume="${CLAUDE_CODE_CONTAINER_HOME_VOLUME:-claude-code-container-home}"
+host_work="${CLAUDE_CODE_CONTAINER_WORKSPACE:-$HOME/work}"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-dockerfile="${CLAUDE_CODE_DEV_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
-timezone="${CLAUDE_CODE_DEV_TIMEZONE:-UTC}"
-claude_version="${CLAUDE_CODE_DEV_CLAUDE_VERSION:-latest}"
-build_network="${CLAUDE_CODE_DEV_BUILD_NETWORK:-}"
-base_image="${CLAUDE_CODE_DEV_BASE_IMAGE:-}"
-debian_mirror="${CLAUDE_CODE_DEV_DEBIAN_MIRROR:-}"
-debian_security_mirror="${CLAUDE_CODE_DEV_DEBIAN_SECURITY_MIRROR:-}"
-shell_alias=claude-dev
-shell_rc="${CLAUDE_CODE_DEV_SHELL_RC:-$HOME/.bashrc}"
+dockerfile="${CLAUDE_CODE_CONTAINER_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
+timezone="${CLAUDE_CODE_CONTAINER_TIMEZONE:-UTC}"
+claude_version="${CLAUDE_CODE_CONTAINER_CLAUDE_VERSION:-latest}"
+build_network="${CLAUDE_CODE_CONTAINER_BUILD_NETWORK:-}"
+base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
+debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
+debian_security_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR:-}"
+shell_alias=claude-container
+shell_rc="${CLAUDE_CODE_CONTAINER_SHELL_RC:-$HOME/.bashrc}"
 host_user="$(id -un)"
-host_key_comment="claude-code-dev:${home_volume}"
-container_label="io.github.claude-code-dev.home-volume=$home_volume"
+host_key_comment="claude-code-container:${home_volume}"
+container_label="io.github.claude-code-container.home-volume=$home_volume"
 
 usage() {
   cat <<'EOF'
-Usage: claude-code-dev <command> [ARG...]
+Usage: claude-code-container <command> [ARG...]
 
 Commands:
-  install      Build and initialize the environment, then install the claude-dev alias.
+  install      Build and initialize the environment, then install the claude-container alias.
   reinstall    Rebuild and reinstall while preserving persistent Home data.
   uninstall    Remove runtime integration and image while preserving Home data.
   clear        Remove the runtime and all persistent Home data (requires confirmation).
@@ -109,13 +109,13 @@ import sys
 
 path = Path(sys.argv[1])
 host_user = sys.argv[2]
-start = "# claude-code-dev: host access begin"
-end = "# claude-code-dev: host access end"
+start = "# claude-code-container: host access begin"
+end = "# claude-code-container: host access end"
 text = path.read_text() if path.exists() else ""
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
     if not separator or end not in remainder:
-        raise SystemExit(f"Malformed claude-code-dev block in {path}")
+        raise SystemExit(f"Malformed claude-code-container block in {path}")
     _, _, after = remainder.partition(end)
     text = (before.rstrip() + "\n" + after.lstrip()).strip()
 for line in text.splitlines():
@@ -196,10 +196,10 @@ install_host_authorization() {
 initialize_runtime() {
   require_workspace
   docker image inspect "$image" >/dev/null 2>&1 || \
-    die "Docker image does not exist: $image; run claude-code-dev install"
+    die "Docker image does not exist: $image; run claude-code-container install"
   if ! docker volume inspect "$home_volume" >/dev/null 2>&1; then
     docker volume create \
-      --label io.github.claude-code-dev.purpose=persistent-home \
+      --label io.github.claude-code-container.purpose=persistent-home \
       "$home_volume" >/dev/null
   fi
   install_host_authorization
@@ -215,8 +215,8 @@ verify_host_ssh() {
 }
 
 install_alias() {
-  local start='# claude-code-dev: shell alias begin'
-  local end='# claude-code-dev: shell alias end'
+  local start='# claude-code-container: shell alias begin'
+  local end='# claude-code-container: shell alias end'
   touch "$shell_rc"
   python3 - "$shell_rc" "$start" "$end" "$shell_alias" <<'PY'
 from pathlib import Path
@@ -228,20 +228,20 @@ text = path.read_text()
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
     if not separator or end not in remainder:
-        raise SystemExit(f"Malformed claude-code-dev alias block in {path}")
+        raise SystemExit(f"Malformed claude-code-container alias block in {path}")
     _, _, after = remainder.partition(end)
     text = (before.rstrip() + "\n" + after.lstrip()).strip()
 for line in text.splitlines():
     if line.strip().startswith(f"alias {alias_name}="):
         raise SystemExit(f"Conflicting alias {alias_name} in {path}")
-block = f"{start}\nalias {alias_name}='claude-code-dev shell'\n{end}"
+block = f"{start}\nalias {alias_name}='claude-code-container shell'\n{end}"
 path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
 PY
 }
 
 remove_alias() {
-  local start='# claude-code-dev: shell alias begin'
-  local end='# claude-code-dev: shell alias end'
+  local start='# claude-code-container: shell alias begin'
+  local end='# claude-code-container: shell alias end'
   [[ -f "$shell_rc" ]] || return 0
   python3 - "$shell_rc" "$start" "$end" <<'PY'
 from pathlib import Path
@@ -254,7 +254,7 @@ if start not in text and end not in text:
     raise SystemExit(0)
 before, separator, remainder = text.partition(start)
 if not separator or end not in remainder:
-    raise SystemExit(f"Malformed claude-code-dev alias block in {path}")
+    raise SystemExit(f"Malformed claude-code-container alias block in {path}")
 _, _, after = remainder.partition(end)
 text = (before.rstrip() + "\n" + after.lstrip()).rstrip()
 path.write_text(text + ("\n" if text else ""))
@@ -353,8 +353,8 @@ main() {
     printf 'Uninstalled. Persistent Home volume preserved: %s\n' "$home_volume"
     ;;
   clear)
-    (($# <= 1)) || die 'usage: claude-code-dev clear [--yes]'
-    [[ $# == 0 || "$1" == --yes ]] || die 'usage: claude-code-dev clear [--yes]'
+    (($# <= 1)) || die 'usage: claude-code-container clear [--yes]'
+    [[ $# == 0 || "$1" == --yes ]] || die 'usage: claude-code-container clear [--yes]'
     check_platform
     confirm_clear "${1:-}"
     remove_runtime

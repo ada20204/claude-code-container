@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">claude-code-container</title>
+  <desc id="desc">A disposable Claude Code development container connected to persistent Home data, the host workspace, and host-managed network policy.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#e87835"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="420" rx="18" fill="#f7f8f5"/>
+  <path d="M52 58H1148M52 362H1148" stroke="#d7ddd8" stroke-width="2"/>
+
+  <g id="title-block" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <text x="58" y="94" fill="#c85d21" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" font-weight="700">LINUX · DOCKER · CLAUDE CODE</text>
+    <text id="hero-project-title" x="58" y="166" fill="#18201d" font-size="48" font-weight="760">claude-code-container</text>
+    <text x="58" y="215" fill="#3f4945" font-size="25" font-weight="500">Rebuild the environment.</text>
+    <text x="58" y="250" fill="#3f4945" font-size="25" font-weight="500">Keep the work.</text>
+
+    <g transform="translate(58 292)" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18">
+      <rect width="234" height="42" rx="8" fill="#ffffff" stroke="#cbd2ce"/>
+      <text id="hero-shell-command" x="20" y="27" fill="#18201d">$ claude-container</text>
+    </g>
+    <text x="58" y="389" fill="#69736f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16">amd64 + arm64  ·  persistent Home  ·  restricted ssh host</text>
+  </g>
+
+  <g id="system-proof" transform="translate(650 82)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <rect x="0" y="0" width="492" height="246" rx="14" fill="#eef1ed" stroke="#9aa59f" stroke-width="2" stroke-dasharray="8 7"/>
+    <text x="22" y="35" fill="#69736f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16">DISPOSABLE RUNTIME</text>
+
+    <rect x="28" y="61" width="238" height="134" rx="10" fill="#ffffff" stroke="#7b8882" stroke-width="2"/>
+    <text x="48" y="96" fill="#18201d" font-size="22" font-weight="700">Claude Code</text>
+    <text id="hero-tool-row-one" x="48" y="127" fill="#56615c" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="15">Node · Python · Git</text>
+    <text id="hero-tool-row-two" x="48" y="156" fill="#56615c" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="15">curl · ssh · build</text>
+    <circle cx="239" cy="87" r="8" fill="#e87835"/>
+
+    <path d="M266 128H305" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+    <rect x="315" y="99" width="148" height="58" rx="9" fill="#ffffff" stroke="#7b8882" stroke-width="2"/>
+    <text x="335" y="124" fill="#18201d" font-size="19" font-weight="700">Host policy</text>
+    <text x="335" y="145" fill="#56615c" font-size="16">network egress</text>
+
+    <path d="M147 195V222" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M389 157V222" stroke="#e87835" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <g id="durable-state" transform="translate(691 319)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <rect x="0" y="0" width="178" height="58" rx="9" fill="#18201d"/>
+    <text x="18" y="25" fill="#ffffff" font-size="18" font-weight="750">Persistent Home</text>
+    <text x="18" y="46" fill="#cbd2ce" font-size="15">login + config + tools</text>
+
+    <rect x="207" y="0" width="224" height="58" rx="9" fill="#18201d"/>
+    <text x="225" y="25" fill="#ffffff" font-size="18" font-weight="750">Host workspace</text>
+    <text x="225" y="46" fill="#cbd2ce" font-size="15">~/work  -  /workspace</text>
+  </g>
+</svg>
