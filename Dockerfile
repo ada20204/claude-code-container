@@ -79,7 +79,7 @@ RUN set -eux; \
     release_base=https://downloads.claude.ai/claude-code-releases; \
     case "${TARGET_CLAUDE_VERSION}" in \
         latest|stable) \
-            claude_version="$(curl -fsSL --retry 3 --connect-timeout 15 \
+            claude_version="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 \
                 --max-time 120 "$release_base/${TARGET_CLAUDE_VERSION}")" \
             ;; \
         *) claude_version="${TARGET_CLAUDE_VERSION}" ;; \
@@ -93,7 +93,7 @@ RUN set -eux; \
         arm64) claude_platform=linux-arm64 ;; \
         *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
     esac; \
-    manifest="$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 \
+    manifest="$(curl -fsSL --http1.1 --retry 3 --connect-timeout 15 --max-time 120 \
         "$release_base/$claude_version/manifest.json")"; \
     claude_sha256="$(printf '%s' "$manifest" | jq -r \
         --arg platform "$claude_platform" '.platforms[$platform].checksum // empty')"; \
@@ -103,7 +103,7 @@ RUN set -eux; \
     esac; \
     claude_dir="$HOME/.local/share/claude/versions"; \
     install -d "$claude_dir"; \
-    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 1200 \
+    curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 --max-time 1200 \
         --speed-time 60 --speed-limit 1024 \
         -o "$claude_dir/$claude_version" \
         "$release_base/$claude_version/$claude_platform/claude"; \

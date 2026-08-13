@@ -27,6 +27,7 @@ grep -Fq 'ARG BASE_IMAGE=' "$root/Dockerfile"
 grep -Fq 'ARG DEV_HOME=' "$root/Dockerfile"
 grep -Fq 'RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig' "$root/Dockerfile"
 grep -Fq 'https://downloads.claude.ai/claude-code-releases' "$root/Dockerfile"
+test "$(grep -Fc -- '--http1.1' "$root/Dockerfile")" -ge 3
 grep -Fq "'.platforms[\$platform].checksum // empty'" "$root/Dockerfile"
 grep -Fq 'CLAUDE_CODE_CONTAINER_BASE_IMAGE' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_BASE_IMAGE' "$root/README.md"
