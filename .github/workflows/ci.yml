@@ -15,6 +15,6 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Check shell scripts
-        run: shellcheck bin/claude-code-dev install.sh tests/test.sh
+        run: shellcheck bin/claude-code-container install.sh tests/test.sh
       - name: Run tests
         run: ./tests/test.sh

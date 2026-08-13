@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 ARG DEV_USER=developer
 ARG DEV_UID=1000
 ARG DEV_GID=1000
+ARG DEV_HOME=/home/developer
 ARG DEV_TZ=UTC
 ARG TARGET_NODE_VERSION=24.18.1
 ARG TARGET_PNPM_VERSION=11.21.0
@@ -13,19 +14,20 @@ ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 
 ENV TZ=${DEV_TZ} \
-    HOME=/home/${DEV_USER} \
+    HOME=${DEV_HOME} \
     LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
     NODE_VERSION=${TARGET_NODE_VERSION} \
     PNPM_VERSION=${TARGET_PNPM_VERSION} \
-    NPM_CONFIG_PREFIX=/home/${DEV_USER}/.local \
-    PATH=/home/${DEV_USER}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NPM_CONFIG_PREFIX=${DEV_HOME}/.local \
+    PATH=${DEV_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     DEBIAN_FRONTEND=noninteractive
 
 RUN set -eux; \
     case "${DEV_USER}" in ''|*[!a-zA-Z0-9_-]*) exit 1 ;; esac; \
     case "${DEV_UID}:${DEV_GID}" in *[!0-9:]*) exit 1 ;; esac; \
+    case "${DEV_HOME}" in /*) ;; *) exit 1 ;; esac; \
     test -f "/usr/share/zoneinfo/${DEV_TZ}"; \
     sed -i \
         -e "s|^URIs: http://deb.debian.org/debian$|URIs: ${DEBIAN_MIRROR}|" \
@@ -46,24 +48,25 @@ RUN set -eux; \
         arm64) node_arch=arm64; node_sha256=7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c ;; \
         *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 3 --connect-timeout 15 -o /tmp/node.tar.xz \
+    curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 -o /tmp/node.tar.xz \
         "https://nodejs.org/dist/v${TARGET_NODE_VERSION}/node-v${TARGET_NODE_VERSION}-linux-${node_arch}.tar.xz"; \
     printf '%s  %s\n' "${node_sha256}" /tmp/node.tar.xz | sha256sum -c -; \
     tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local; \
     corepack enable; \
-    curl -fsSL --retry 3 --connect-timeout 15 -o /tmp/pnpm.tgz \
+    curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 -o /tmp/pnpm.tgz \
         "https://registry.npmjs.org/pnpm/-/pnpm-${TARGET_PNPM_VERSION}.tgz"; \
     printf '%s  %s\n' "${PNPM_SHA256}" /tmp/pnpm.tgz | sha256sum -c -; \
     groupmod --new-name "${DEV_USER}" --gid "${DEV_GID}" node; \
+    install -d "$(dirname "${DEV_HOME}")"; \
     usermod --login "${DEV_USER}" --uid "${DEV_UID}" --gid "${DEV_GID}" \
-        --home "/home/${DEV_USER}" --move-home node; \
+        --home "${DEV_HOME}" --move-home node; \
     install -d -o "${DEV_UID}" -g "${DEV_GID}" /workspace \
-        "/home/${DEV_USER}/.local/bin" "/home/${DEV_USER}/.local/lib/node_modules/pnpm"; \
-    tar -xzf /tmp/pnpm.tgz -C "/home/${DEV_USER}/.local/lib/node_modules/pnpm" --strip-components=1; \
-    ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs "/home/${DEV_USER}/.local/bin/pnpm"; \
-    ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs "/home/${DEV_USER}/.local/bin/pnpx"; \
+        "${DEV_HOME}/.local/bin" "${DEV_HOME}/.local/lib/node_modules/pnpm"; \
+    tar -xzf /tmp/pnpm.tgz -C "${DEV_HOME}/.local/lib/node_modules/pnpm" --strip-components=1; \
+    ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs "${DEV_HOME}/.local/bin/pnpm"; \
+    ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs "${DEV_HOME}/.local/bin/pnpx"; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
-    chown -R "${DEV_UID}:${DEV_GID}" "/home/${DEV_USER}"; \
+    chown -R "${DEV_UID}:${DEV_GID}" "${DEV_HOME}"; \
     rm -f /tmp/node.tar.xz /tmp/pnpm.tgz; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
@@ -73,13 +76,40 @@ USER ${DEV_USER}
 WORKDIR ${HOME}
 
 RUN set -eux; \
-    curl -fsSL --retry 3 --connect-timeout 15 -o /tmp/install-claude.sh https://claude.ai/install.sh; \
-    if [ "${TARGET_CLAUDE_VERSION}" = latest ]; then \
-        bash /tmp/install-claude.sh; \
-    else \
-        bash /tmp/install-claude.sh "${TARGET_CLAUDE_VERSION}"; \
-    fi; \
-    rm /tmp/install-claude.sh; \
+    release_base=https://downloads.claude.ai/claude-code-releases; \
+    case "${TARGET_CLAUDE_VERSION}" in \
+        latest|stable) \
+            claude_version="$(curl -fsSL --retry 3 --connect-timeout 15 \
+                --max-time 120 "$release_base/${TARGET_CLAUDE_VERSION}")" \
+            ;; \
+        *) claude_version="${TARGET_CLAUDE_VERSION}" ;; \
+    esac; \
+    case "$claude_version" in \
+        [0-9]*.[0-9]*.[0-9]*) ;; \
+        *) echo "Invalid Claude Code version: $claude_version" >&2; exit 1 ;; \
+    esac; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) claude_platform=linux-x64 ;; \
+        arm64) claude_platform=linux-arm64 ;; \
+        *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
+    esac; \
+    manifest="$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 \
+        "$release_base/$claude_version/manifest.json")"; \
+    claude_sha256="$(printf '%s' "$manifest" | jq -r \
+        --arg platform "$claude_platform" '.platforms[$platform].checksum // empty')"; \
+    case "$claude_sha256" in \
+        [0-9a-f][0-9a-f]*) test "${#claude_sha256}" -eq 64 ;; \
+        *) echo "Missing checksum for $claude_platform" >&2; exit 1 ;; \
+    esac; \
+    claude_dir="$HOME/.local/share/claude/versions"; \
+    install -d "$claude_dir"; \
+    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 1200 \
+        --speed-time 60 --speed-limit 1024 \
+        -o "$claude_dir/$claude_version" \
+        "$release_base/$claude_version/$claude_platform/claude"; \
+    printf '%s  %s\n' "$claude_sha256" "$claude_dir/$claude_version" | sha256sum -c -; \
+    chmod 755 "$claude_dir/$claude_version"; \
+    ln -s "$claude_dir/$claude_version" "$HOME/.local/bin/claude"; \
     claude --version
 
 USER root

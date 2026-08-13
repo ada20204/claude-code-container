@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f4a261?style=flat-square"></a>
-  <img alt="Linux amd64 and arm64" src="https://img.shields.io/badge/linux-amd64%20%7C%20arm64-222629?style=flat-square">
+  <img alt="Linux and macOS" src="https://img.shields.io/badge/host-Linux%20%7C%20macOS-222629?style=flat-square">
   <img alt="Docker required" src="https://img.shields.io/badge/runtime-Docker-222629?style=flat-square">
 </p>
 
@@ -21,8 +21,8 @@ projects on the host; let the host decide how network traffic is routed.
 
 ### Requirements
 
-- Linux on `amd64` or `arm64`
-- Docker Engine available to the current user without `sudo`
+- Linux on `amd64` or `arm64`, or Apple Silicon macOS with OrbStack
+- Docker Engine available to the current user without `sudo`; on macOS it is provided by OrbStack
 - Bash, Python 3, and an OpenSSH server
 - A writable `~/.ssh/authorized_keys`
 - A host workspace at `~/work`, or a custom `CLAUDE_CODE_CONTAINER_WORKSPACE`
@@ -34,7 +34,8 @@ git clone https://github.com/ada20204/claude-code-container.git
 cd claude-code-container
 ./install.sh
 claude-code-container install
-source ~/.bashrc
+source ~/.bashrc  # Linux
+# source ~/.zshrc # macOS
 ```
 
 Enter the environment:
@@ -43,7 +44,8 @@ Enter the environment:
 claude-container
 ```
 
-The default directory is the container user's Home. Projects are available at
+The default directory matches the host user's Home path: `/home/<user>` on
+Linux and `/Users/<user>` on macOS. Projects are available at
 both `~/work` and `/workspace`. From inside the container, return to the host
 with the generated key:
 
@@ -68,6 +70,8 @@ container is disposable. State is divided deliberately:
   container-to-host SSH key, and user-level tools under `~/.local`.
 - **Host workspace** keeps projects under the host's `~/work` and mounts them
   read-write at `/workspace`; `~/work` inside the container is a symlink to it.
+- **Standard host directories** mount `~/Downloads`, `~/Documents`, `~/Desktop`,
+  and `~/.claude/projects` read-write at the same paths inside the container.
 - **Host network policy** receives normal Docker bridge egress. No proxy URL,
   node, account, or Mihomo configuration is baked into the image.
 - **Disposable runtime** can be removed or rebuilt without moving project data
@@ -137,8 +141,11 @@ tools, container SSH material, and every other file in the named Home volume.
 - `ip`, `ifconfig`, `ping`, `dig`, `nc`, `lsof`, `ps`, and `pkill`
 - Archive and file inspection utilities
 
-The container user, UID, and GID are derived from the installing host user so
-files created in `/workspace` retain the expected ownership.
+On Linux, the container UID and GID are derived from the installing host user so
+files created in `/workspace` retain the expected ownership. On macOS, the
+container uses UID/GID 1000 because OrbStack virtualizes bind-mount ownership;
+this also avoids collisions with macOS system group IDs. Matching the host Home
+path keeps absolute paths in shared Claude project records consistent.
 
 ## Configuration
 
@@ -150,6 +157,11 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_IMAGE` | `claude-code-container:latest` | Managed Docker image |
 | `CLAUDE_CODE_CONTAINER_HOME_VOLUME` | `claude-code-container-home` | Persistent Home volume |
 | `CLAUDE_CODE_CONTAINER_WORKSPACE` | `~/work` | Host project directory |
+| `CLAUDE_CODE_CONTAINER_DOWNLOADS` | `~/Downloads` | Host Downloads directory |
+| `CLAUDE_CODE_CONTAINER_DOCUMENTS` | `~/Documents` | Host Documents directory |
+| `CLAUDE_CODE_CONTAINER_DESKTOP` | `~/Desktop` | Host Desktop directory |
+| `CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS` | `~/.claude/projects` | Host Claude project history |
+| `CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS` | unset | Comma-separated extra Home directory names to mount at matching paths |
 | `CLAUDE_CODE_CONTAINER_DOCKERFILE` | `~/.local/share/claude-code-container/Dockerfile` | Build input |
 | `CLAUDE_CODE_CONTAINER_TIMEZONE` | `UTC` | Container time zone |
 | `CLAUDE_CODE_CONTAINER_CLAUDE_VERSION` | `latest` | Claude Code release or exact version |
@@ -157,7 +169,7 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_BASE_IMAGE` | pinned official Node image | Registry mirror with the same digest |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR` | Debian official | Package mirror |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR` | Debian official | Security package mirror |
-| `CLAUDE_CODE_CONTAINER_SHELL_RC` | `~/.bashrc` | File receiving the managed alias |
+| `CLAUDE_CODE_CONTAINER_SHELL_RC` | `~/.bashrc` on Linux, `~/.zshrc` on macOS | File receiving the managed alias |
 
 Example for a host that needs local mirrors and host networking during build:
 
@@ -172,6 +184,13 @@ export CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR='https://mirror.example/debi
 claude-code-container install
 ```
 
+Host-specific directories stay outside the public defaults. For example:
+
+```bash
+export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS='private-projects,company-code'
+claude-container
+```
+
 ## Security boundary
 
 - No Docker socket, host private key, host Home, GPU, or privileged mode is
@@ -179,8 +198,9 @@ claude-code-container install
 - No ports are published and no credentials or proxy configuration are baked
   into the image.
 - The container generates its own Ed25519 key inside the persistent Home
-  volume. The host authorization is limited to the Docker bridge subnet and
-  disables agent, port, X11, and user-rc forwarding.
+  volume. On Linux, host authorization is limited to the Docker bridge subnet.
+  On macOS, OrbStack forwards host access from loopback, so authorization is
+  limited to `127.0.0.1/32`. Both disable agent, port, X11, and user-rc forwarding.
 - Managed containers carry a volume-specific label so lifecycle cleanup does
   not select unrelated containers.
 - `ssh host` grants the same shell privileges as the installing host user. The

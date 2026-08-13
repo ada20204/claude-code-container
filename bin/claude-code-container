@@ -2,9 +2,15 @@
 set -euo pipefail
 
 app_name=claude-code-container
+host_os="$(uname -s)"
 image="${CLAUDE_CODE_CONTAINER_IMAGE:-claude-code-container:latest}"
 home_volume="${CLAUDE_CODE_CONTAINER_HOME_VOLUME:-claude-code-container-home}"
 host_work="${CLAUDE_CODE_CONTAINER_WORKSPACE:-$HOME/work}"
+host_downloads="${CLAUDE_CODE_CONTAINER_DOWNLOADS:-$HOME/Downloads}"
+host_documents="${CLAUDE_CODE_CONTAINER_DOCUMENTS:-$HOME/Documents}"
+host_desktop="${CLAUDE_CODE_CONTAINER_DESKTOP:-$HOME/Desktop}"
+host_claude_projects="${CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS:-$HOME/.claude/projects}"
+extra_home_dirs="${CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS:-}"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 dockerfile="${CLAUDE_CODE_CONTAINER_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
 timezone="${CLAUDE_CODE_CONTAINER_TIMEZONE:-UTC}"
@@ -14,8 +20,22 @@ base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
 debian_security_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR:-}"
 shell_alias=claude-container
-shell_rc="${CLAUDE_CODE_CONTAINER_SHELL_RC:-$HOME/.bashrc}"
+case "$host_os" in
+  Darwin) default_shell_rc="$HOME/.zshrc" ;;
+  Linux) default_shell_rc="$HOME/.bashrc" ;;
+  *) default_shell_rc="$HOME/.profile" ;;
+esac
+shell_rc="${CLAUDE_CODE_CONTAINER_SHELL_RC:-$default_shell_rc}"
 host_user="$(id -un)"
+if [[ "$host_os" == Darwin ]]; then
+  container_uid=1000
+  container_gid=1000
+  container_home="/Users/$host_user"
+else
+  container_uid="$(id -u)"
+  container_gid="$(id -g)"
+  container_home="/home/$host_user"
+fi
 host_key_comment="claude-code-container:${home_volume}"
 container_label="io.github.claude-code-container.home-volume=$home_volume"
 
@@ -45,27 +65,33 @@ require_command() {
 }
 
 check_platform() {
-  [[ "$(uname -s)" == Linux ]] || die 'only Linux hosts are supported'
+  case "$host_os" in
+    Linux) ;;
+    Darwin)
+      command -v orbctl >/dev/null 2>&1 || die 'macOS support requires OrbStack'
+      [[ "$(orbctl status 2>/dev/null || true)" == Running ]] || die 'OrbStack is not running'
+      ;;
+    *) die "unsupported host platform: $host_os" ;;
+  esac
   require_command docker
   docker info >/dev/null 2>&1 || die 'Docker daemon is unavailable to the current user'
 }
 
 build_image() {
   local target_image="${1:-$image}"
-  local network_args=()
+  local build_args=(build)
   [[ -f "$dockerfile" ]] || die "Dockerfile does not exist: $dockerfile"
   if [[ -n "$build_network" ]]; then
-    network_args=(--network "$build_network")
+    build_args+=(--network "$build_network")
   fi
-  local mirror_args=()
-  [[ -n "$base_image" ]] && mirror_args+=(--build-arg "BASE_IMAGE=$base_image")
-  [[ -n "$debian_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
-  [[ -n "$debian_security_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
-  docker build "${network_args[@]}" \
-    "${mirror_args[@]}" \
+  [[ -n "$base_image" ]] && build_args+=(--build-arg "BASE_IMAGE=$base_image")
+  [[ -n "$debian_mirror" ]] && build_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
+  [[ -n "$debian_security_mirror" ]] && build_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
+  docker "${build_args[@]}" \
     --build-arg "DEV_USER=$host_user" \
-    --build-arg "DEV_UID=$(id -u)" \
-    --build-arg "DEV_GID=$(id -g)" \
+    --build-arg "DEV_UID=$container_uid" \
+    --build-arg "DEV_GID=$container_gid" \
+    --build-arg "DEV_HOME=$container_home" \
     --build-arg "DEV_TZ=$timezone" \
     --build-arg "TARGET_CLAUDE_VERSION=$claude_version" \
     --tag "$target_image" \
@@ -73,7 +99,10 @@ build_image() {
 }
 
 require_workspace() {
-  [[ -d "$host_work" ]] || die "workspace does not exist: $host_work"
+  local path
+  for path in "$host_work" "$host_downloads" "$host_documents" "$host_desktop" "$host_claude_projects"; do
+    [[ -d "$path" ]] || die "required host directory does not exist: $path"
+  done
 }
 
 bridge_subnet() {
@@ -84,9 +113,17 @@ bridge_subnet() {
   printf '%s\n' "$subnet"
 }
 
+host_authorized_source() {
+  if [[ "$host_os" == Darwin ]]; then
+    printf '%s\n' '127.0.0.1/32'
+  else
+    bridge_subnet
+  fi
+}
+
 initialize_home() {
   docker run --rm --interactive \
-    --volume "$home_volume:/home/$host_user" \
+    --volume "$home_volume:$container_home" \
     "$image" bash -s -- "$host_user" "$host_key_comment" <<'CONTAINER_INIT'
 set -euo pipefail
 
@@ -96,6 +133,21 @@ key="$HOME/.ssh/id_ed25519_host"
 config="$HOME/.ssh/config"
 
 install -d -m 700 "$HOME/.ssh" "$HOME/.claude"
+claude_link="$HOME/.local/bin/claude"
+if [[ -L "$claude_link" ]]; then
+  claude_target="$(readlink "$claude_link")"
+  case "$claude_target" in
+    "/home/$host_user/.local/share/claude/versions/"*)
+      claude_version="${claude_target##*/}"
+      migrated_target="$HOME/.local/share/claude/versions/$claude_version"
+      [[ -x "$migrated_target" ]] || {
+        printf 'Missing persisted Claude binary: %s\n' "$migrated_target" >&2
+        exit 1
+      }
+      ln -sfn "$migrated_target" "$claude_link"
+      ;;
+  esac
+fi
 if [[ ! -f "$key" ]]; then
   ssh-keygen -q -t ed25519 -N '' -C "$key_comment" -f "$key"
 fi
@@ -150,7 +202,7 @@ if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
 
 ## Environment
 
-- Home and default directory: \`/home/$host_user\`.
+- Home and default directory: \`$HOME\`.
 - Host workspace: \`$HOME/work\`, linked to \`/workspace\`.
 - Home data persists in a Docker volume; other container paths are disposable.
 - Use \`ssh host\` for restricted, key-based access to the Docker host.
@@ -162,6 +214,16 @@ if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
 3. Never copy host private keys into the container.
 EOF
   chmod 600 "$HOME/.claude/CLAUDE.md"
+elif grep -Fqx -- "- Home and default directory: \`/home/$host_user\`." "$HOME/.claude/CLAUDE.md"; then
+  python3 - "$HOME/.claude/CLAUDE.md" "$host_user" "$HOME" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+old = f"- Home and default directory: `/home/{sys.argv[2]}`."
+new = f"- Home and default directory: `{sys.argv[3]}`."
+path.write_text(path.read_text().replace(old, new))
+PY
 fi
 
 chmod 600 "$config" "$key"
@@ -172,7 +234,7 @@ CONTAINER_INIT
 
 install_host_authorization() {
   local subnet public_key authorized_line stage backup
-  subnet="$(bridge_subnet)"
+  subnet="$(host_authorized_source)"
   public_key="$(initialize_home)"
   [[ "$public_key" == 'ssh-ed25519 '* ]] || die 'container public key has an unexpected format'
 
@@ -209,7 +271,7 @@ initialize_runtime() {
 verify_host_ssh() {
   docker run --rm \
     --add-host host.docker.internal:host-gateway \
-    --volume "$home_volume:/home/$host_user" \
+    --volume "$home_volume:$container_home" \
     "$image" ssh -o BatchMode=yes -o ConnectTimeout=8 host true || \
     die 'container-to-host SSH verification failed; confirm that the host SSH server is reachable'
 }
@@ -218,12 +280,13 @@ install_alias() {
   local start='# claude-code-container: shell alias begin'
   local end='# claude-code-container: shell alias end'
   touch "$shell_rc"
-  python3 - "$shell_rc" "$start" "$end" "$shell_alias" <<'PY'
+  python3 - "$shell_rc" "$start" "$end" "$shell_alias" "$extra_home_dirs" <<'PY'
 from pathlib import Path
+import shlex
 import sys
 
 path = Path(sys.argv[1])
-start, end, alias_name = sys.argv[2:]
+start, end, alias_name, extra_home_dirs = sys.argv[2:]
 text = path.read_text()
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
@@ -234,7 +297,13 @@ if start in text or end in text:
 for line in text.splitlines():
     if line.strip().startswith(f"alias {alias_name}="):
         raise SystemExit(f"Conflicting alias {alias_name} in {path}")
-block = f"{start}\nalias {alias_name}='claude-code-container shell'\n{end}"
+lines = [start]
+if extra_home_dirs:
+    lines.append(
+        "export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS=" + shlex.quote(extra_home_dirs)
+    )
+lines.extend([f"alias {alias_name}='claude-code-container shell'", end])
+block = "\n".join(lines)
 path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
 PY
 }
@@ -278,11 +347,10 @@ remove_host_authorization() {
 }
 
 remove_runtime() {
-  local container_ids=()
-  mapfile -t container_ids < <(docker ps -aq --filter "label=$container_label")
-  if ((${#container_ids[@]})); then
-    docker rm -f "${container_ids[@]}" >/dev/null
-  fi
+  local container_id
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] && docker rm -f "$container_id" >/dev/null
+  done < <(docker ps -aq --filter "label=$container_label")
   docker image inspect "$image" >/dev/null 2>&1 && docker image rm "$image" >/dev/null
   remove_alias
   remove_host_authorization
@@ -300,22 +368,45 @@ confirm_clear() {
 }
 
 run_container() {
-  local tty=()
-  [[ -t 0 && -t 1 ]] && tty=(-it)
-  exec docker run --rm "${tty[@]}" \
+  local run_args=(run --rm)
+  local extra_dir
+  local extra_dirs=()
+  [[ -t 0 && -t 1 ]] && run_args+=(-it)
+  if [[ -n "$extra_home_dirs" ]]; then
+    IFS=',' read -r -a extra_dirs <<< "$extra_home_dirs"
+    for extra_dir in "${extra_dirs[@]}"; do
+      case "$extra_dir" in
+        ''|.|..|*/*|*[^a-zA-Z0-9._-]*) die "invalid extra Home directory name: $extra_dir" ;;
+      esac
+      [[ -d "$HOME/$extra_dir" ]] || die "extra host directory does not exist: $HOME/$extra_dir"
+      run_args+=(--volume "$HOME/$extra_dir:$container_home/$extra_dir")
+    done
+  fi
+  exec docker "${run_args[@]}" \
     --label "$container_label" \
     --add-host host.docker.internal:host-gateway \
-    --workdir "/home/$host_user" \
-    --volume "$home_volume:/home/$host_user" \
+    --workdir "$container_home" \
+    --volume "$home_volume:$container_home" \
     --volume "$host_work:/workspace" \
+    --volume "$host_downloads:$container_home/Downloads" \
+    --volume "$host_documents:$container_home/Documents" \
+    --volume "$host_desktop:$container_home/Desktop" \
+    --volume "$host_claude_projects:$container_home/.claude/projects" \
     "$image" "$@"
 }
 
 doctor() {
   check_platform
+  printf 'Host platform: %s\n' "$host_os"
+  printf 'Container Home: %s\n' "$container_home"
   printf 'Docker: ok\n'
   printf 'Dockerfile: %s\n' "$dockerfile"
   printf 'Workspace: %s\n' "$host_work"
+  printf 'Downloads: %s\n' "$host_downloads"
+  printf 'Documents: %s\n' "$host_documents"
+  printf 'Desktop: %s\n' "$host_desktop"
+  printf 'Claude projects: %s\n' "$host_claude_projects"
+  printf 'Extra Home directories: %s\n' "${extra_home_dirs:-none}"
   printf 'Build network: %s\n' "${build_network:-default}"
   printf 'Base image: %s\n' "${base_image:-Dockerfile default}"
   docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"
