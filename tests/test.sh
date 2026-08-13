@@ -34,6 +34,7 @@ grep -Fq 'macOS support requires OrbStack' "$root/bin/claude-code-container"
 grep -Fq "printf '%s\\n' '127.0.0.1/32'" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' "$root/bin/claude-code-container"
+grep -Fq 'CLAUDE_CODE_CONTAINER_MOUNTS' "$root/bin/claude-code-container"
 grep -Fq "container_home=\"/Users/\$host_user\"" "$root/bin/claude-code-container"
 grep -Fq "migrated_target=\"\$HOME/.local/share/claude/versions/\$claude_version\"" "$root/bin/claude-code-container"
 if grep -Fq 'mapfile' "$root/bin/claude-code-container"; then
@@ -73,6 +74,36 @@ mkdir -p "$tmp/extra-home"
   grep -Fq "export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS=private-projects,company-code" "$HOME/.zshrc"
   install_alias
   test "$(grep -c '^export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS=' "$HOME/.zshrc")" -eq 1
+)
+
+mkdir -p "$tmp/custom-mount-home/data" "$tmp/custom-mount-home/client"
+(
+  export HOME="$tmp/custom-mount-home"
+  export CLAUDE_CODE_CONTAINER_SHELL_RC="$HOME/.zshrc"
+  export CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/data:/data:ro;$HOME/client:/projects/client"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-container"
+  install_alias
+  grep -Fq 'export CLAUDE_CODE_CONTAINER_MOUNTS=' "$HOME/.zshrc"
+  parse_mount_options --mount "$HOME/data:/runtime-data:ro" -- printf ok
+  test "${command_args[*]}" = 'printf ok'
+  test "${cli_mount_specs[0]}" = "$HOME/data:/runtime-data:ro"
+  custom_run_args=()
+  append_custom_mount "$HOME/data:/runtime-data:ro"
+  test "${custom_run_args[0]}" = '--volume'
+  test "${custom_run_args[1]}" = "$HOME/data:/runtime-data:ro"
+  cd "$HOME"
+  custom_run_args=()
+  append_custom_mount 'data:/relative-source'
+  test "${custom_run_args[1]}" = "$HOME/data:/relative-source:rw"
+  if (append_custom_mount "$HOME/data:/workspace") 2>/dev/null; then
+    printf 'managed mount target was not rejected\n' >&2
+    exit 1
+  fi
+  if (append_custom_mount "$HOME/data:/projects/../workspace") 2>/dev/null; then
+    printf 'non-normalized mount target was not rejected\n' >&2
+    exit 1
+  fi
 )
 
 mkdir -p "$tmp/conflict-home"

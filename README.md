@@ -162,6 +162,7 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_DESKTOP` | `~/Desktop` | Host Desktop directory |
 | `CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS` | `~/.claude/projects` | Host Claude project history |
 | `CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS` | unset | Comma-separated extra Home directory names to mount at matching paths |
+| `CLAUDE_CODE_CONTAINER_MOUNTS` | unset | Semicolon-separated `HOST_PATH:CONTAINER_PATH[:ro]` custom mounts |
 | `CLAUDE_CODE_CONTAINER_DOCKERFILE` | `~/.local/share/claude-code-container/Dockerfile` | Build input |
 | `CLAUDE_CODE_CONTAINER_TIMEZONE` | `UTC` | Container time zone |
 | `CLAUDE_CODE_CONTAINER_CLAUDE_VERSION` | `latest` | Claude Code release or exact version |
@@ -190,6 +191,29 @@ Host-specific directories stay outside the public defaults. For example:
 export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS='private-projects,company-code'
 claude-container
 ```
+
+For paths that do not belong at matching Home locations, pass one or more
+custom mounts for a single invocation:
+
+```bash
+claude-code-container shell \
+  --mount "$HOME/data:/data:ro" \
+  --mount "$HOME/client-project:/projects/client"
+```
+
+Use `CLAUDE_CODE_CONTAINER_MOUNTS` for persistent defaults. Separate entries
+with semicolons; each entry is read-write unless it ends in `:ro`:
+
+```bash
+export CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/data:/data:ro;$HOME/client-project:/projects/client"
+claude-code-container install
+```
+
+`install` records the configured value in the managed shell block, so the
+`claude-container` alias reuses it. Source paths must exist, targets must be
+absolute, and custom mounts cannot replace the managed Home, workspace, or
+standard directory targets. A read-write mount exposes those host files to
+commands running in the container; prefer `:ro` when writes are unnecessary.
 
 ## Security boundary
 

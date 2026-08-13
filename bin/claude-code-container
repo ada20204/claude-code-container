@@ -11,6 +11,7 @@ host_documents="${CLAUDE_CODE_CONTAINER_DOCUMENTS:-$HOME/Documents}"
 host_desktop="${CLAUDE_CODE_CONTAINER_DESKTOP:-$HOME/Desktop}"
 host_claude_projects="${CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS:-$HOME/.claude/projects}"
 extra_home_dirs="${CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS:-}"
+custom_mounts="${CLAUDE_CODE_CONTAINER_MOUNTS:-}"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 dockerfile="${CLAUDE_CODE_CONTAINER_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
 timezone="${CLAUDE_CODE_CONTAINER_TIMEZONE:-UTC}"
@@ -48,10 +49,14 @@ Commands:
   reinstall    Rebuild and reinstall while preserving persistent Home data.
   uninstall    Remove runtime integration and image while preserving Home data.
   clear        Remove the runtime and all persistent Home data (requires confirmation).
-  shell        Enter the persistent Claude Code environment.
-  run COMMAND  Run a command in a disposable container.
+  shell [--mount SPEC]          Enter the persistent Claude Code environment.
+  run [--mount SPEC] -- COMMAND Run a command in a disposable container.
   doctor       Check prerequisites and current state.
   help         Show this help.
+
+Mount syntax:
+  --mount HOST_PATH:CONTAINER_PATH[:ro]
+  Repeat --mount as needed. HOST_PATH must already exist.
 EOF
 }
 
@@ -280,13 +285,13 @@ install_alias() {
   local start='# claude-code-container: shell alias begin'
   local end='# claude-code-container: shell alias end'
   touch "$shell_rc"
-  python3 - "$shell_rc" "$start" "$end" "$shell_alias" "$extra_home_dirs" <<'PY'
+  python3 - "$shell_rc" "$start" "$end" "$shell_alias" "$extra_home_dirs" "$custom_mounts" <<'PY'
 from pathlib import Path
 import shlex
 import sys
 
 path = Path(sys.argv[1])
-start, end, alias_name, extra_home_dirs = sys.argv[2:]
+start, end, alias_name, extra_home_dirs, custom_mounts = sys.argv[2:]
 text = path.read_text()
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
@@ -301,6 +306,10 @@ lines = [start]
 if extra_home_dirs:
     lines.append(
         "export CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS=" + shlex.quote(extra_home_dirs)
+    )
+if custom_mounts:
+    lines.append(
+        "export CLAUDE_CODE_CONTAINER_MOUNTS=" + shlex.quote(custom_mounts)
     )
 lines.extend([f"alias {alias_name}='claude-code-container shell'", end])
 block = "\n".join(lines)
@@ -367,10 +376,72 @@ confirm_clear() {
   [[ "$answer" =~ ^[yY]$ ]] || { printf 'Clear cancelled.\n'; exit 0; }
 }
 
+append_custom_mount() {
+  local spec="$1"
+  local mode=rw
+  local mapping source target
+  case "$spec" in
+    *:ro) mode=ro; mapping="${spec%:ro}" ;;
+    *:rw) mapping="${spec%:rw}" ;;
+    *) mapping="$spec" ;;
+  esac
+  source="${mapping%%:*}"
+  target="${mapping#*:}"
+  [[ -n "$source" && "$target" != "$mapping" && -n "$target" ]] || \
+    die "invalid mount specification: $spec"
+  case "$source" in
+    \~) source="$HOME" ;;
+    \~/*) source="$HOME/${source#\~/}" ;;
+  esac
+  [[ "$source" != *:* ]] || die "mount source cannot contain a colon: $source"
+  [[ -e "$source" ]] || die "mount source does not exist: $source"
+  [[ "$source" == /* ]] || source="$PWD/$source"
+  case "$target" in
+    /*) ;;
+    *) die "mount target must be an absolute container path: $target" ;;
+  esac
+  case "$target" in
+    *:*|*//*|*/./*|*/.|*/../*|*/..) die "mount target must be a normalized path: $target" ;;
+  esac
+  case "$target" in
+    /|/workspace|"$container_home"|"$container_home/Downloads"|"$container_home/Documents"|"$container_home/Desktop"|"$container_home/.claude/projects")
+      die "mount target is managed by claude-code-container: $target"
+      ;;
+  esac
+  custom_run_args+=(--volume "$source:$target:$mode")
+}
+
+parse_mount_options() {
+  command_args=()
+  cli_mount_specs=()
+  while (($#)); do
+    case "$1" in
+      --mount)
+        (($# >= 2)) || die '--mount requires HOST_PATH:CONTAINER_PATH[:ro]'
+        cli_mount_specs+=("$2")
+        shift 2
+        ;;
+      --mount=*)
+        cli_mount_specs+=("${1#--mount=}")
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *) break ;;
+    esac
+  done
+  command_args=("$@")
+}
+
 run_container() {
   local run_args=(run --rm)
   local extra_dir
   local extra_dirs=()
+  local env_mount
+  local env_mount_specs=()
+  custom_run_args=()
   [[ -t 0 && -t 1 ]] && run_args+=(-it)
   if [[ -n "$extra_home_dirs" ]]; then
     IFS=',' read -r -a extra_dirs <<< "$extra_home_dirs"
@@ -381,6 +452,21 @@ run_container() {
       [[ -d "$HOME/$extra_dir" ]] || die "extra host directory does not exist: $HOME/$extra_dir"
       run_args+=(--volume "$HOME/$extra_dir:$container_home/$extra_dir")
     done
+  fi
+  if [[ -n "$custom_mounts" ]]; then
+    IFS=';' read -r -a env_mount_specs <<< "$custom_mounts"
+    for env_mount in "${env_mount_specs[@]}"; do
+      [[ -n "$env_mount" ]] || die 'CLAUDE_CODE_CONTAINER_MOUNTS contains an empty entry'
+      append_custom_mount "$env_mount"
+    done
+  fi
+  if ((${#cli_mount_specs[@]})); then
+    for env_mount in "${cli_mount_specs[@]}"; do
+      append_custom_mount "$env_mount"
+    done
+  fi
+  if ((${#custom_run_args[@]})); then
+    run_args+=("${custom_run_args[@]}")
   fi
   exec docker "${run_args[@]}" \
     --label "$container_label" \
@@ -407,6 +493,7 @@ doctor() {
   printf 'Desktop: %s\n' "$host_desktop"
   printf 'Claude projects: %s\n' "$host_claude_projects"
   printf 'Extra Home directories: %s\n' "${extra_home_dirs:-none}"
+  printf 'Custom mounts: %s\n' "${custom_mounts:-none}"
   printf 'Build network: %s\n' "${build_network:-default}"
   printf 'Base image: %s\n' "${base_image:-Dockerfile default}"
   docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"
@@ -453,15 +540,18 @@ main() {
     printf 'Cleared image, Home data, alias, host authorization, and related containers.\n'
     ;;
   shell)
+    parse_mount_options "$@"
+    ((${#command_args[@]} == 0)) || die 'usage: claude-code-container shell [--mount SPEC]'
     check_platform
     initialize_runtime
     run_container bash
     ;;
   run)
-    (($#)) || die 'run requires a command'
+    parse_mount_options "$@"
+    ((${#command_args[@]})) || die 'run requires a command'
     check_platform
     initialize_runtime
-    run_container "$@"
+    run_container "${command_args[@]}"
     ;;
   doctor)
     (($# == 0)) || die 'doctor does not accept arguments'
