@@ -9,7 +9,6 @@ ARG DEV_TZ=UTC
 ARG TARGET_NODE_VERSION=24.18.1
 ARG TARGET_PNPM_VERSION=11.21.0
 ARG TARGET_CLAUDE_VERSION=latest
-ARG CLAUDE_BINARY_SEED=0
 ARG PNPM_SHA256=87237d37eadb79dc626a0576eb3a52d23d70422c323ae5e00fc05c91f4323780
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
@@ -76,6 +75,7 @@ ENV USER=${DEV_USER} LOGNAME=${DEV_USER}
 USER ${DEV_USER}
 WORKDIR ${HOME}
 
+ARG CLAUDE_BINARY_SEED=0
 COPY claude-seed /tmp/claude-seed
 RUN set -eux; \
     claude_dir="$HOME/.local/share/claude/versions"; \
