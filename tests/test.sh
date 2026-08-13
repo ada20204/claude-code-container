@@ -26,6 +26,7 @@ done
 grep -Fq 'ARG BASE_IMAGE=' "$root/Dockerfile"
 grep -Fq 'ARG DEV_HOME=' "$root/Dockerfile"
 grep -Fq 'ARG CLAUDE_BINARY_SEED=0' "$root/Dockerfile"
+grep -Fq 'RUN chmod 755 /tmp/claude-seed' "$root/Dockerfile"
 grep -Fq 'RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig' "$root/Dockerfile"
 grep -Fq 'https://downloads.claude.ai/claude-code-releases' "$root/Dockerfile"
 test "$(grep -Fc -- '--http1.1' "$root/Dockerfile")" -ge 3

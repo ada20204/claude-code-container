@@ -76,7 +76,10 @@ USER ${DEV_USER}
 WORKDIR ${HOME}
 
 ARG CLAUDE_BINARY_SEED=0
+USER root
 COPY claude-seed /tmp/claude-seed
+RUN chmod 755 /tmp/claude-seed
+USER ${DEV_USER}
 RUN set -eux; \
     claude_dir="$HOME/.local/share/claude/versions"; \
     install -d "$claude_dir"; \
