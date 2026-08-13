@@ -1,4 +1,5 @@
-FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46
+ARG BASE_IMAGE=node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46
+FROM ${BASE_IMAGE}
 
 ARG DEV_USER=developer
 ARG DEV_UID=1000
@@ -80,5 +81,9 @@ RUN set -eux; \
     fi; \
     rm /tmp/install-claude.sh; \
     claude --version
+
+USER root
+RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig
+USER ${DEV_USER}
 
 CMD ["bash"]

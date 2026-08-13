@@ -73,6 +73,7 @@ alias, host authorization, and related containers while preserving Home data.
 | `CLAUDE_CODE_DEV_TIMEZONE` | `UTC` | Container time zone |
 | `CLAUDE_CODE_DEV_CLAUDE_VERSION` | `2.1.228` | Reproducible Claude Code baseline |
 | `CLAUDE_CODE_DEV_BUILD_NETWORK` | unset | Optional Docker build network, such as `host` |
+| `CLAUDE_CODE_DEV_BASE_IMAGE` | Pinned official Node image | Optional registry mirror while preserving a pinned digest |
 | `CLAUDE_CODE_DEV_DEBIAN_MIRROR` | Debian official | Optional Debian package mirror |
 | `CLAUDE_CODE_DEV_DEBIAN_SECURITY_MIRROR` | Debian official | Optional Debian security mirror |
 | `CLAUDE_CODE_DEV_SHELL_RC` | `~/.bashrc` | Shell file containing the managed `claude-dev` alias |
@@ -83,6 +84,7 @@ Example:
 export CLAUDE_CODE_DEV_TIMEZONE=America/Chicago
 export CLAUDE_CODE_DEV_WORKSPACE=$HOME/projects
 export CLAUDE_CODE_DEV_BUILD_NETWORK=host
+export CLAUDE_CODE_DEV_BASE_IMAGE='mirror.example/library/node@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46'
 claude-code-dev install
 ```
 

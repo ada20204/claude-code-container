@@ -10,6 +10,7 @@ dockerfile="${CLAUDE_CODE_DEV_DOCKERFILE:-$data_home/$app_name/Dockerfile}"
 timezone="${CLAUDE_CODE_DEV_TIMEZONE:-UTC}"
 claude_version="${CLAUDE_CODE_DEV_CLAUDE_VERSION:-2.1.228}"
 build_network="${CLAUDE_CODE_DEV_BUILD_NETWORK:-}"
+base_image="${CLAUDE_CODE_DEV_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_DEV_DEBIAN_MIRROR:-}"
 debian_security_mirror="${CLAUDE_CODE_DEV_DEBIAN_SECURITY_MIRROR:-}"
 shell_alias=claude-dev
@@ -57,6 +58,7 @@ build_image() {
     network_args=(--network "$build_network")
   fi
   local mirror_args=()
+  [[ -n "$base_image" ]] && mirror_args+=(--build-arg "BASE_IMAGE=$base_image")
   [[ -n "$debian_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
   [[ -n "$debian_security_mirror" ]] && mirror_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
   docker build "${network_args[@]}" \
@@ -315,6 +317,7 @@ doctor() {
   printf 'Dockerfile: %s\n' "$dockerfile"
   printf 'Workspace: %s\n' "$host_work"
   printf 'Build network: %s\n' "${build_network:-default}"
+  printf 'Base image: %s\n' "${base_image:-Dockerfile default}"
   docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"
   docker volume inspect "$home_volume" >/dev/null 2>&1 && printf 'Home volume: present (%s)\n' "$home_volume" || printf 'Home volume: absent (%s)\n' "$home_volume"
 }

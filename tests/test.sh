@@ -7,7 +7,8 @@ bash -n "$root/bin/claude-code-dev" "$root/install.sh"
 
 if grep -RInE --exclude-dir=.git \
   '(/Users/|10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|sk-[A-Za-z0-9]+|BEGIN OPENSSH PRIVATE KEY)' \
-  "$root/bin" "$root/Dockerfile" "$root/install.sh"; then
+  "$root/bin" "$root/Dockerfile" "$root/install.sh" \
+  "$root/README.md" "$root/SECURITY.md" "$root/.github"; then
   printf 'private host data or credentials found\n' >&2
   exit 1
 fi
@@ -16,6 +17,11 @@ help="$("$root/bin/claude-code-dev" help)"
 for command in install reinstall uninstall clear shell run doctor; do
   grep -q "  $command" <<<"$help"
 done
+
+grep -Fq 'ARG BASE_IMAGE=' "$root/Dockerfile"
+grep -Fq 'RUN ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig' "$root/Dockerfile"
+grep -Fq 'CLAUDE_CODE_DEV_BASE_IMAGE' "$root/bin/claude-code-dev"
+grep -Fq 'CLAUDE_CODE_DEV_BASE_IMAGE' "$root/README.md"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
