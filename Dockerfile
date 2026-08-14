@@ -71,6 +71,21 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
+ARG OH_MY_ZSH_COMMIT=b54a71977574cfcf659cc2f15a5e6422f17a8da7
+
+RUN set -eux; \
+    if [ -n "${HTTP_PROXY:-}" ]; then set -- -o "Acquire::http::Proxy=${HTTP_PROXY}"; else set --; fi; \
+    apt-get "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update; \
+    apt-get "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends tmux zsh; \
+    git init -q /usr/local/share/oh-my-zsh; \
+    git -C /usr/local/share/oh-my-zsh remote add origin https://github.com/ohmyzsh/ohmyzsh.git; \
+    git -C /usr/local/share/oh-my-zsh fetch -q --depth 1 origin "${OH_MY_ZSH_COMMIT}"; \
+    git -C /usr/local/share/oh-my-zsh checkout -q --detach FETCH_HEAD; \
+    test "$(git -C /usr/local/share/oh-my-zsh rev-parse HEAD)" = "${OH_MY_ZSH_COMMIT}"; \
+    rm -rf /usr/local/share/oh-my-zsh/.git; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
+
 ENV USER=${DEV_USER} LOGNAME=${DEV_USER}
 USER ${DEV_USER}
 WORKDIR ${HOME}
@@ -135,4 +150,4 @@ USER root
 RUN rm -f /tmp/claude-seed && ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig
 USER ${DEV_USER}
 
-CMD ["bash"]
+CMD ["zsh"]

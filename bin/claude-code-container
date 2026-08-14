@@ -86,7 +86,7 @@ check_platform() {
 build_image() {
   local target_image="${1:-$image}"
   local build_args=(build)
-  local build_context build_status
+  local build_context build_status proxy_name proxy_value
   [[ -f "$dockerfile" ]] || die "Dockerfile does not exist: $dockerfile"
   if [[ -n "$claude_binary" ]]; then
     [[ "$claude_binary" == /* ]] || die 'CLAUDE_CODE_CONTAINER_CLAUDE_BINARY must be an absolute path'
@@ -104,6 +104,10 @@ build_image() {
   if [[ -n "$build_network" ]]; then
     build_args+=(--network "$build_network")
   fi
+  for proxy_name in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+    proxy_value="${!proxy_name:-}"
+    [[ -n "$proxy_value" ]] && build_args+=(--build-arg "$proxy_name=$proxy_value")
+  done
   [[ -n "$base_image" ]] && build_args+=(--build-arg "BASE_IMAGE=$base_image")
   [[ -n "$debian_mirror" ]] && build_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
   [[ -n "$debian_security_mirror" ]] && build_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
@@ -160,6 +164,16 @@ key="$HOME/.ssh/id_ed25519_host"
 config="$HOME/.ssh/config"
 
 install -d -m 700 "$HOME/.ssh" "$HOME/.claude"
+zshrc="$HOME/.zshrc"
+if [[ ! -e "$zshrc" ]]; then
+  cat > "$zshrc" <<'EOF'
+export ZSH=/usr/local/share/oh-my-zsh
+ZSH_THEME="robbyrussell"
+plugins=(git)
+source "$ZSH/oh-my-zsh.sh"
+EOF
+  chmod 600 "$zshrc"
+fi
 claude_link="$HOME/.local/bin/claude"
 if [[ -L "$claude_link" ]]; then
   claude_target="$(readlink "$claude_link")"
@@ -567,7 +581,7 @@ main() {
     ((${#command_args[@]} == 0)) || die 'usage: claude-code-container shell [--mount SPEC]'
     check_platform
     initialize_runtime
-    run_container bash
+    run_container zsh
     ;;
   run)
     parse_mount_options "$@"

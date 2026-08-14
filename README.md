@@ -137,6 +137,8 @@ tools, container SSH material, and every other file in the named Home volume.
 - Node.js, npm, Corepack, and pnpm
 - Python, pip, and `venv`
 - Git, curl, OpenSSH client, rsync, jq, ripgrep, and fd
+- Zsh with a pinned Oh My Zsh installation and a non-destructive default `.zshrc`
+- tmux for persistent terminal sessions
 - GCC, G++, make, pkg-config, and OpenSSL headers
 - `ip`, `ifconfig`, `ping`, `dig`, `nc`, `lsof`, `ps`, and `pkill`
 - Archive and file inspection utilities
@@ -183,6 +185,17 @@ export CLAUDE_CODE_CONTAINER_BASE_IMAGE="mirror.example/library/node@$node_diges
 export CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR='https://mirror.example/debian'
 export CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR='https://mirror.example/debian-security'
 
+claude-code-container install
+```
+
+When a host requires a proxy only while building, export the standard proxy
+variables before installation. They are passed to Docker as build arguments and
+are not retained in the final image:
+
+```bash
+export HTTPS_PROXY='http://127.0.0.1:7890'
+export HTTP_PROXY="$HTTPS_PROXY"
+export NO_PROXY='localhost,127.0.0.1,host.docker.internal'
 claude-code-container install
 ```
 
@@ -234,7 +247,8 @@ commands running in the container; prefer `:ro` when writes are unnecessary.
 - No Docker socket, host private key, host Home, GPU, or privileged mode is
   mounted.
 - No ports are published and no credentials or proxy configuration are baked
-  into the image.
+  into the image. Build-time standard proxy variables are passed as transient
+  Docker build arguments only.
 - The container generates its own Ed25519 key inside the persistent Home
   volume. On Linux, host authorization is limited to the Docker bridge subnet.
   On macOS, OrbStack forwards host access from loopback, so authorization is
