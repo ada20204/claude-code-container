@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-prefix="${PREFIX:-$HOME/.local}"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-bin_dir="$prefix/bin"
 data_dir="$data_home/claude-code-container"
+launcher="$data_dir/claude-code-container"
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-install -d "$bin_dir" "$data_dir"
-install -m 0755 "$source_dir/bin/claude-code-container" "$bin_dir/claude-code-container"
+install -d "$data_dir"
+install -m 0755 "$source_dir/bin/claude-code-container" "$launcher"
 install -m 0644 "$source_dir/Dockerfile" "$data_dir/Dockerfile"
 
-printf 'Installed %s\n' "$bin_dir/claude-code-container"
-printf 'Initialize with: %s install\n' "$bin_dir/claude-code-container"
+printf 'Installed internal launcher: %s\n' "$launcher"
+printf 'Initialize with: %s install\n' "$launcher"

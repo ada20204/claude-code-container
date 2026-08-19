@@ -33,7 +33,7 @@ projects on the host; let the host decide how network traffic is routed.
 git clone https://github.com/ada20204/claude-code-container.git
 cd claude-code-container
 ./install.sh
-"$HOME/.local/bin/claude-code-container" install
+"$HOME/.local/share/claude-code-container/claude-code-container" install
 source ~/.bashrc  # Linux
 # source ~/.zshrc # macOS
 ```
@@ -57,9 +57,10 @@ Installation stops instead of replacing a conflicting `Host host` entry,
 `claude-container` alias, or `~/work` path. It reports success only after a real
 non-interactive SSH connection back to the host succeeds.
 
-The project does not modify `PATH`. `~/.local/bin/claude-code-container` is an
-internal lifecycle launcher; after initialization, `claude-container` is the
-only interactive entry point.
+The project does not modify `PATH`. Its internal lifecycle launcher lives at
+`~/.local/share/claude-code-container/claude-code-container`, outside normal
+command lookup; after initialization, `claude-container` is the only
+interactive entry point.
 
 ## What stays when the container goes away
 
@@ -110,7 +111,7 @@ containers still use the Docker bridge.
 claude-container
 
 # Inspect prerequisites and managed resources.
-"$HOME/.local/bin/claude-code-container" doctor
+"$HOME/.local/share/claude-code-container/claude-code-container" doctor
 
 # Update Claude Code inside the persistent Home volume.
 claude update
@@ -126,11 +127,11 @@ reproducible builds matter more than receiving the latest release.
 
 | Command | Image and integration | Persistent Home |
 | --- | --- | --- |
-| `~/.local/bin/claude-code-container install` | Build and initialize | Create or reuse |
-| `~/.local/bin/claude-code-container reinstall` | Rebuild and repair | Preserve |
-| `~/.local/bin/claude-code-container uninstall` | Remove | Preserve |
-| `~/.local/bin/claude-code-container clear` | Remove | Delete after confirmation |
-| `~/.local/bin/claude-code-container clear --yes` | Remove | Delete without prompting |
+| `~/.local/share/claude-code-container/claude-code-container install` | Build and initialize | Create or reuse |
+| `~/.local/share/claude-code-container/claude-code-container reinstall` | Rebuild and repair | Preserve |
+| `~/.local/share/claude-code-container/claude-code-container uninstall` | Remove | Preserve |
+| `~/.local/share/claude-code-container/claude-code-container clear` | Remove | Delete after confirmation |
+| `~/.local/share/claude-code-container/claude-code-container clear --yes` | Remove | Delete without prompting |
 
 `reinstall` builds a replacement image before removing the current managed
 runtime. `clear` is destructive: it removes Claude login state, user-installed
@@ -189,7 +190,7 @@ export CLAUDE_CODE_CONTAINER_BASE_IMAGE="mirror.example/library/node@$node_diges
 export CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR='https://mirror.example/debian'
 export CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR='https://mirror.example/debian-security'
 
-"$HOME/.local/bin/claude-code-container" install
+"$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
 When a host requires a proxy only while building, export the standard proxy
@@ -200,7 +201,7 @@ are not retained in the final image:
 export HTTPS_PROXY='http://127.0.0.1:7890'
 export HTTP_PROXY="$HTTPS_PROXY"
 export NO_PROXY='localhost,127.0.0.1,host.docker.internal'
-"$HOME/.local/bin/claude-code-container" install
+"$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
 When the official release host is unavailable or rate-limited, an existing
@@ -208,7 +209,7 @@ trusted Claude Code binary can seed the image without being mounted at runtime:
 
 ```bash
 export CLAUDE_CODE_CONTAINER_CLAUDE_BINARY="$(command -v claude)"
-"$HOME/.local/bin/claude-code-container" install
+"$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
 The seed is copied into a temporary build context, checked by running
@@ -237,7 +238,7 @@ with semicolons; each entry is read-write unless it ends in `:ro`:
 
 ```bash
 export CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/data:/data:ro;$HOME/client-project:/projects/client"
-"$HOME/.local/bin/claude-code-container" install
+"$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
 `install` records the configured value in the managed shell block, so the

@@ -56,8 +56,8 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-HOME="$tmp/home" PREFIX="$tmp/prefix" XDG_DATA_HOME="$tmp/data" "$root/install.sh" >/dev/null
-test -x "$tmp/prefix/bin/claude-code-container"
+HOME="$tmp/home" XDG_DATA_HOME="$tmp/data" "$root/install.sh" >/dev/null
+test -x "$tmp/data/claude-code-container/claude-code-container"
 test -f "$tmp/data/claude-code-container/Dockerfile"
 
 mkdir -p "$tmp/function-home"
@@ -70,7 +70,7 @@ printf 'export USER_SETTING=keep\n' > "$tmp/function-home/.bashrc"
   install_alias
   install_alias
   test "$(grep -c '^# claude-code-container: shell alias begin$' "$HOME/.bashrc")" -eq 1
-  grep -Fq "alias claude-container='$HOME/.local/bin/claude-code-container shell'" "$HOME/.bashrc"
+  grep -Fq "alias claude-container='$HOME/.local/share/claude-code-container/claude-code-container shell'" "$HOME/.bashrc"
   remove_alias
   grep -q '^export USER_SETTING=keep$' "$HOME/.bashrc"
   ! grep -q 'claude-code-container: shell alias' "$HOME/.bashrc"

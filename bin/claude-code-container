@@ -22,7 +22,7 @@ base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
 debian_security_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR:-}"
 shell_alias=claude-container
-launcher_path="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$HOME/.local/bin/$app_name}"
+launcher_path="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$data_home/$app_name/$app_name}"
 case "$host_os" in
   Darwin) default_shell_rc="$HOME/.zshrc" ;;
   Linux) default_shell_rc="$HOME/.bashrc" ;;
