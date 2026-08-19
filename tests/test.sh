@@ -70,6 +70,7 @@ printf 'export USER_SETTING=keep\n' > "$tmp/function-home/.bashrc"
   install_alias
   install_alias
   test "$(grep -c '^# claude-code-container: shell alias begin$' "$HOME/.bashrc")" -eq 1
+  grep -Fq "alias claude-container='$HOME/.local/bin/claude-code-container shell'" "$HOME/.bashrc"
   remove_alias
   grep -q '^export USER_SETTING=keep$' "$HOME/.bashrc"
   ! grep -q 'claude-code-container: shell alias' "$HOME/.bashrc"

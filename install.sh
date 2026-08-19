@@ -12,7 +12,4 @@ install -m 0755 "$source_dir/bin/claude-code-container" "$bin_dir/claude-code-co
 install -m 0644 "$source_dir/Dockerfile" "$data_dir/Dockerfile"
 
 printf 'Installed %s\n' "$bin_dir/claude-code-container"
-case ":$PATH:" in
-  *":$bin_dir:"*) ;;
-  *) printf 'Add %s to PATH, then run: claude-code-container install\n' "$bin_dir" ;;
-esac
+printf 'Initialize with: %s install\n' "$bin_dir/claude-code-container"

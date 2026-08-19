@@ -22,6 +22,7 @@ base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
 debian_security_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR:-}"
 shell_alias=claude-container
+launcher_path="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$HOME/.local/bin/$app_name}"
 case "$host_os" in
   Darwin) default_shell_rc="$HOME/.zshrc" ;;
   Linux) default_shell_rc="$HOME/.bashrc" ;;
@@ -321,13 +322,13 @@ install_alias() {
   local start='# claude-code-container: shell alias begin'
   local end='# claude-code-container: shell alias end'
   touch "$shell_rc"
-  python3 - "$shell_rc" "$start" "$end" "$shell_alias" "$extra_home_dirs" "$custom_mounts" <<'PY'
+  python3 - "$shell_rc" "$start" "$end" "$shell_alias" "$launcher_path" "$extra_home_dirs" "$custom_mounts" <<'PY'
 from pathlib import Path
 import shlex
 import sys
 
 path = Path(sys.argv[1])
-start, end, alias_name, extra_home_dirs, custom_mounts = sys.argv[2:]
+start, end, alias_name, launcher_path, extra_home_dirs, custom_mounts = sys.argv[2:]
 text = path.read_text()
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
@@ -347,7 +348,7 @@ if custom_mounts:
     lines.append(
         "export CLAUDE_CODE_CONTAINER_MOUNTS=" + shlex.quote(custom_mounts)
     )
-lines.extend([f"alias {alias_name}='claude-code-container shell'", end])
+lines.extend([f"alias {alias_name}={shlex.quote(launcher_path + ' shell')}", end])
 block = "\n".join(lines)
 path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
 PY
