@@ -25,11 +25,13 @@ done
 
 grep -Fq 'ARG BASE_IMAGE=' "$root/Dockerfile"
 grep -Fq 'ARG DEV_HOME=' "$root/Dockerfile"
+grep -Fq 'ARG NODE_DIST_BASE_URL=https://nodejs.org/dist' "$root/Dockerfile"
 grep -Fq 'ARG CLAUDE_BINARY_SEED=0' "$root/Dockerfile"
 grep -Fq 'ARG OH_MY_ZSH_COMMIT=' "$root/Dockerfile"
 grep -Fq 'install -y --no-install-recommends tmux zsh' "$root/Dockerfile"
 grep -Fq 'Acquire::http::Proxy=' "$root/Dockerfile"
 grep -Fq 'git init -q /usr/local/share/oh-my-zsh' "$root/Dockerfile"
+grep -Fq 'git -c http.version=HTTP/1.1 -C /usr/local/share/oh-my-zsh fetch' "$root/Dockerfile"
 grep -Fq 'CMD ["zsh"]' "$root/Dockerfile"
 grep -Fq 'RUN chmod 755 /tmp/claude-seed' "$root/Dockerfile"
 grep -Fq 'RUN rm -f /tmp/claude-seed && ln -s /usr/sbin/ifconfig /usr/local/bin/ifconfig' "$root/Dockerfile"
@@ -38,17 +40,28 @@ test "$(grep -Fc -- '--http1.1' "$root/Dockerfile")" -ge 3
 grep -Fq "'.platforms[\$platform].checksum // empty'" "$root/Dockerfile"
 grep -Fq 'CLAUDE_CODE_CONTAINER_BASE_IMAGE' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_BASE_IMAGE' "$root/README.md"
+grep -Fq 'CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL' "$root/bin/claude-code-container"
+grep -Fq 'CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL' "$root/README.md"
 grep -Fq 'macOS support requires OrbStack' "$root/bin/claude-code-container"
 grep -Fq "printf '%s\\n' '127.0.0.1/32'" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS' "$root/bin/claude-code-container"
+grep -Fq 'CLAUDE_CODE_CONTAINER_AGENTS' "$root/bin/claude-code-container"
+grep -Fq 'CLAUDE_CODE_CONTAINER_AGENTS' "$root/README.md"
+grep -Fq -- "--volume \"\$host_agents:\$container_home/.agents\"" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_MOUNTS' "$root/bin/claude-code-container"
+grep -Fq 'run [--mount SPEC] [--cwd HOST_PATH] -- COMMAND' "$root/bin/claude-code-container"
+grep -Fq 'resolve_container_workdir' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_BINARY' "$root/bin/claude-code-container"
 grep -Fq 'export ZSH=/usr/local/share/oh-my-zsh' "$root/bin/claude-code-container"
 grep -Fq 'run_container zsh' "$root/bin/claude-code-container"
 grep -Fq 'for proxy_name in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY' "$root/bin/claude-code-container"
 grep -Fq "container_home=\"/Users/\$host_user\"" "$root/bin/claude-code-container"
 grep -Fq "migrated_target=\"\$HOME/.local/share/claude/versions/\$claude_version\"" "$root/bin/claude-code-container"
+grep -Fq "probe_endpoint 'Anthropic API' 'https://api.anthropic.com'" "$root/bin/claude-code-container"
+grep -Fq "probe_endpoint 'GitHub' 'https://github.com'" "$root/bin/claude-code-container"
+grep -Fq "probe_endpoint 'npm registry' 'https://registry.npmjs.org'" "$root/bin/claude-code-container"
+grep -Fq 'Proxy variables:' "$root/bin/claude-code-container"
 if grep -Fq 'mapfile' "$root/bin/claude-code-container"; then
   printf 'Bash 4-only mapfile usage found\n' >&2
   exit 1
@@ -113,8 +126,33 @@ mkdir -p "$tmp/custom-mount-home/data" "$tmp/custom-mount-home/client"
     printf 'managed mount target was not rejected\n' >&2
     exit 1
   fi
+  if (append_custom_mount "$HOME/data:$container_home/.agents") 2>/dev/null; then
+    printf 'managed agents mount target was not rejected\n' >&2
+    exit 1
+  fi
   if (append_custom_mount "$HOME/data:/projects/../workspace") 2>/dev/null; then
     printf 'non-normalized mount target was not rejected\n' >&2
+    exit 1
+  fi
+)
+
+mkdir -p "$tmp/workdir-home/work/project" "$tmp/workdir-home/mywork/project"
+(
+  export HOME="$tmp/workdir-home"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-container"
+  container_home=/home/tester
+  mount_host_roots=(
+    "$(cd "$HOME/work" && pwd -P)"
+    "$(cd "$HOME/mywork" && pwd -P)"
+  )
+  mount_container_roots=(/workspace /home/tester/mywork)
+  test "$(resolve_container_workdir "$HOME/work/project")" = /workspace/project
+  test "$(resolve_container_workdir "$HOME/mywork/project")" = /home/tester/mywork/project
+  test "$(resolve_container_workdir "$HOME")" = /home/tester
+  test "$(resolve_container_workdir '')" = /home/tester
+  if (resolve_container_workdir "$tmp" >/dev/null 2>&1); then
+    printf 'unmounted working directory was not rejected\n' >&2
     exit 1
   fi
 )
@@ -156,5 +194,26 @@ if (
   exit 1
 fi
 grep -q "alias claude-container='user-command'" "$tmp/conflict-home/.bashrc"
+
+mkdir -p "$tmp/network-doctor-home"
+(
+  export HOME="$tmp/network-doctor-home"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-container"
+  image=test-image
+  docker() {
+    case "$*" in
+      *'sh -lc'*) printf 'resolver=0.250.250.200\nproxies=none\n' ;;
+      *'bash -s --'*) printf '  probe: ok\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  network_output="$(network_doctor)"
+  grep -Fq 'Network mode: Docker bridge -> host routing policy' <<<"$network_output"
+  grep -Fq 'DNS resolver: 0.250.250.200' <<<"$network_output"
+  grep -Fq 'Proxy variables: none' <<<"$network_output"
+  test "$(grep -Fc 'probe: ok' <<<"$network_output")" -eq 3
+  grep -Fq 'Result: healthy' <<<"$network_output"
+)
 
 printf 'Static and installer tests passed.\n'

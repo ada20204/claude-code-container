@@ -10,6 +10,7 @@ host_downloads="${CLAUDE_CODE_CONTAINER_DOWNLOADS:-$HOME/Downloads}"
 host_documents="${CLAUDE_CODE_CONTAINER_DOCUMENTS:-$HOME/Documents}"
 host_desktop="${CLAUDE_CODE_CONTAINER_DESKTOP:-$HOME/Desktop}"
 host_claude_projects="${CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS:-$HOME/.claude/projects}"
+host_agents="${CLAUDE_CODE_CONTAINER_AGENTS:-$HOME/.agents}"
 extra_home_dirs="${CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS:-}"
 custom_mounts="${CLAUDE_CODE_CONTAINER_MOUNTS:-}"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -21,6 +22,7 @@ build_network="${CLAUDE_CODE_CONTAINER_BUILD_NETWORK:-}"
 base_image="${CLAUDE_CODE_CONTAINER_BASE_IMAGE:-}"
 debian_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR:-}"
 debian_security_mirror="${CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR:-}"
+node_dist_base_url="${CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL:-}"
 shell_alias=claude-container
 launcher_path="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$data_home/$app_name/$app_name}"
 case "$host_os" in
@@ -52,13 +54,18 @@ Commands:
   uninstall    Remove runtime integration and image while preserving Home data.
   clear        Remove the runtime and all persistent Home data (requires confirmation).
   shell [--mount SPEC]          Enter the persistent Claude Code environment.
-  run [--mount SPEC] -- COMMAND Run a command in a disposable container.
+  run [--mount SPEC] [--cwd HOST_PATH] -- COMMAND
+                                 Run a command in a disposable container.
   doctor       Check prerequisites and current state.
   help         Show this help.
 
 Mount syntax:
   --mount HOST_PATH:CONTAINER_PATH[:ro]
   Repeat --mount as needed. HOST_PATH must already exist.
+
+Working directory:
+  --cwd HOST_PATH
+  Start COMMAND in the corresponding mounted container directory.
 EOF
 }
 
@@ -112,6 +119,7 @@ build_image() {
   [[ -n "$base_image" ]] && build_args+=(--build-arg "BASE_IMAGE=$base_image")
   [[ -n "$debian_mirror" ]] && build_args+=(--build-arg "DEBIAN_MIRROR=$debian_mirror")
   [[ -n "$debian_security_mirror" ]] && build_args+=(--build-arg "DEBIAN_SECURITY_MIRROR=$debian_security_mirror")
+  [[ -n "$node_dist_base_url" ]] && build_args+=(--build-arg "NODE_DIST_BASE_URL=$node_dist_base_url")
   if docker "${build_args[@]}" \
     --build-arg "DEV_USER=$host_user" \
     --build-arg "DEV_UID=$container_uid" \
@@ -132,7 +140,10 @@ build_image() {
 
 require_workspace() {
   local path
-  for path in "$host_work" "$host_downloads" "$host_documents" "$host_desktop" "$host_claude_projects"; do
+  if [[ ! -e "$host_agents" ]]; then
+    install -d -m 700 "$host_agents"
+  fi
+  for path in "$host_work" "$host_downloads" "$host_documents" "$host_desktop" "$host_claude_projects" "$host_agents"; do
     [[ -d "$path" ]] || die "required host directory does not exist: $path"
   done
 }
@@ -441,16 +452,21 @@ append_custom_mount() {
     *:*|*//*|*/./*|*/.|*/../*|*/..) die "mount target must be a normalized path: $target" ;;
   esac
   case "$target" in
-    /|/workspace|"$container_home"|"$container_home/Downloads"|"$container_home/Documents"|"$container_home/Desktop"|"$container_home/.claude/projects")
+    /|/workspace|"$container_home"|"$container_home/Downloads"|"$container_home/Documents"|"$container_home/Desktop"|"$container_home/.claude/projects"|"$container_home/.agents")
       die "mount target is managed by claude-code-container: $target"
       ;;
   esac
   custom_run_args+=(--volume "$source:$target:$mode")
+  if [[ -d "$source" ]]; then
+    mount_host_roots+=("$(cd "$source" && pwd -P)")
+    mount_container_roots+=("$target")
+  fi
 }
 
 parse_mount_options() {
   command_args=()
   cli_mount_specs=()
+  requested_host_cwd=
   while (($#)); do
     case "$1" in
       --mount)
@@ -460,6 +476,15 @@ parse_mount_options() {
         ;;
       --mount=*)
         cli_mount_specs+=("${1#--mount=}")
+        shift
+        ;;
+      --cwd)
+        (($# >= 2)) || die '--cwd requires a host directory'
+        requested_host_cwd="$2"
+        shift 2
+        ;;
+      --cwd=*)
+        requested_host_cwd="${1#--cwd=}"
         shift
         ;;
       --)
@@ -472,22 +497,75 @@ parse_mount_options() {
   command_args=("$@")
 }
 
+resolve_container_workdir() {
+  local requested="$1"
+  local requested_real home_real root target suffix
+  local best_length=-1
+  local resolved=
+  local index
+  [[ -n "$requested" ]] || {
+    printf '%s\n' "$container_home"
+    return
+  }
+  [[ "$requested" == /* ]] || requested="$PWD/$requested"
+  [[ -d "$requested" ]] || die "working directory does not exist: $requested"
+  requested_real="$(cd "$requested" && pwd -P)"
+  home_real="$(cd "$HOME" && pwd -P)"
+  if [[ "$requested_real" == "$home_real" ]]; then
+    printf '%s\n' "$container_home"
+    return
+  fi
+  for ((index = 0; index < ${#mount_host_roots[@]}; index++)); do
+    root="${mount_host_roots[$index]}"
+    target="${mount_container_roots[$index]}"
+    if [[ "$requested_real" == "$root" || "$requested_real" == "$root/"* ]]; then
+      if ((${#root} > best_length)); then
+        suffix="${requested_real#"$root"}"
+        resolved="$target$suffix"
+        best_length=${#root}
+      fi
+    fi
+  done
+  [[ -n "$resolved" ]] || die "working directory is not covered by a container mount: $requested_real"
+  printf '%s\n' "$resolved"
+}
+
 run_container() {
   local run_args=(run --rm)
   local extra_dir
   local extra_dirs=()
   local env_mount
   local env_mount_specs=()
+  local container_workdir
   custom_run_args=()
+  mount_host_roots=(
+    "$(cd "$host_work" && pwd -P)"
+    "$(cd "$host_downloads" && pwd -P)"
+    "$(cd "$host_documents" && pwd -P)"
+    "$(cd "$host_desktop" && pwd -P)"
+    "$(cd "$host_claude_projects" && pwd -P)"
+    "$(cd "$host_agents" && pwd -P)"
+  )
+  mount_container_roots=(
+    /workspace
+    "$container_home/Downloads"
+    "$container_home/Documents"
+    "$container_home/Desktop"
+    "$container_home/.claude/projects"
+    "$container_home/.agents"
+  )
   [[ -t 0 && -t 1 ]] && run_args+=(-it)
   if [[ -n "$extra_home_dirs" ]]; then
     IFS=',' read -r -a extra_dirs <<< "$extra_home_dirs"
     for extra_dir in "${extra_dirs[@]}"; do
       case "$extra_dir" in
         ''|.|..|*/*|*[^a-zA-Z0-9._-]*) die "invalid extra Home directory name: $extra_dir" ;;
+        .agents) die '.agents is a standard claude-code-container mount; remove it from CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' ;;
       esac
       [[ -d "$HOME/$extra_dir" ]] || die "extra host directory does not exist: $HOME/$extra_dir"
       run_args+=(--volume "$HOME/$extra_dir:$container_home/$extra_dir")
+      mount_host_roots+=("$(cd "$HOME/$extra_dir" && pwd -P)")
+      mount_container_roots+=("$container_home/$extra_dir")
     done
   fi
   if [[ -n "$custom_mounts" ]]; then
@@ -505,20 +583,23 @@ run_container() {
   if ((${#custom_run_args[@]})); then
     run_args+=("${custom_run_args[@]}")
   fi
+  container_workdir="$(resolve_container_workdir "$requested_host_cwd")"
   exec docker "${run_args[@]}" \
     --label "$container_label" \
     --add-host host.docker.internal:host-gateway \
-    --workdir "$container_home" \
+    --workdir "$container_workdir" \
     --volume "$home_volume:$container_home" \
     --volume "$host_work:/workspace" \
     --volume "$host_downloads:$container_home/Downloads" \
     --volume "$host_documents:$container_home/Documents" \
     --volume "$host_desktop:$container_home/Desktop" \
     --volume "$host_claude_projects:$container_home/.claude/projects" \
+    --volume "$host_agents:$container_home/.agents" \
     "$image" "$@"
 }
 
 doctor() {
+  local image_present=false
   check_platform
   printf 'Host platform: %s\n' "$host_os"
   printf 'Container Home: %s\n' "$container_home"
@@ -529,13 +610,95 @@ doctor() {
   printf 'Documents: %s\n' "$host_documents"
   printf 'Desktop: %s\n' "$host_desktop"
   printf 'Claude projects: %s\n' "$host_claude_projects"
+  printf 'Agents: %s\n' "$host_agents"
   printf 'Extra Home directories: %s\n' "${extra_home_dirs:-none}"
   printf 'Custom mounts: %s\n' "${custom_mounts:-none}"
   printf 'Claude binary seed: %s\n' "${claude_binary:-none}"
   printf 'Build network: %s\n' "${build_network:-default}"
   printf 'Base image: %s\n' "${base_image:-Dockerfile default}"
-  docker image inspect "$image" >/dev/null 2>&1 && printf 'Image: present (%s)\n' "$image" || printf 'Image: absent (%s)\n' "$image"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    image_present=true
+    printf 'Image: present (%s)\n' "$image"
+  else
+    printf 'Image: absent (%s)\n' "$image"
+  fi
   docker volume inspect "$home_volume" >/dev/null 2>&1 && printf 'Home volume: present (%s)\n' "$home_volume" || printf 'Home volume: absent (%s)\n' "$home_volume"
+  if [[ "$image_present" == true ]]; then
+    printf '\nRuntime network:\n'
+    network_doctor
+  else
+    printf '\nRuntime network: skipped (image absent)\n'
+  fi
+}
+
+probe_endpoint() {
+  local label="$1"
+  local url="$2"
+  docker run --rm --interactive "$image" bash -s -- "$label" "$url" <<'CONTAINER_PROBE'
+set -u
+
+label="$1"
+url="$2"
+host="${url#*://}"
+host="${host%%/*}"
+resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+[[ -n "$resolved" ]] || resolved=unresolved
+attempt=1
+last_error=unknown
+
+while ((attempt <= 3)); do
+  metrics_file="$(mktemp)"
+  error_file="$(mktemp)"
+  if curl --silent --show-error --output /dev/null \
+    --connect-timeout 6 --max-time 12 \
+    --write-out 'code=%{http_code}, remote=%{remote_ip}, total=%{time_total}s' \
+    "$url" >"$metrics_file" 2>"$error_file"; then
+    printf '  %s: ok (dns=%s, %s, attempt=%s)\n' \
+      "$label" "$resolved" "$(cat "$metrics_file")" "$attempt"
+    rm -f "$metrics_file" "$error_file"
+    exit 0
+  fi
+  last_error="$(tr '\n' ' ' < "$error_file" | sed 's/[[:space:]]\{1,\}/ /g; s/[[:space:]]$//')"
+  rm -f "$metrics_file" "$error_file"
+  attempt=$((attempt + 1))
+done
+
+case "$resolved" in
+  198.18.*) hint='check Fake-IP/TUN mapping, then the selected upstream group' ;;
+  *) hint='check the selected upstream group, then the host network path' ;;
+esac
+printf '  %s: failed (dns=%s, error=%s; hint: %s)\n' \
+  "$label" "$resolved" "$last_error" "$hint" >&2
+exit 1
+CONTAINER_PROBE
+}
+
+network_doctor() {
+  local context resolver proxy_names failures=0
+  context="$(docker run --rm "$image" sh -lc '
+    resolver=$(awk '\''$1 == "nameserver" { print $2; exit }'\'' /etc/resolv.conf)
+    proxies=$(env | awk -F= '\''toupper($1) ~ /^(HTTP|HTTPS|ALL|NO)_PROXY$/ { print toupper($1) }'\'' | sort -u | paste -sd, -)
+    printf "resolver=%s\nproxies=%s\n" "${resolver:-unknown}" "${proxies:-none}"
+  ')" || {
+    printf '  Context: failed to inspect a disposable runtime container\n' >&2
+    return 1
+  }
+  resolver="$(printf '%s\n' "$context" | awk -F= '$1 == "resolver" { print $2 }')"
+  proxy_names="$(printf '%s\n' "$context" | awk -F= '$1 == "proxies" { print $2 }')"
+  printf '  Network mode: Docker bridge -> host routing policy\n'
+  printf '  DNS resolver: %s\n' "${resolver:-unknown}"
+  printf '  Proxy variables: %s\n' "${proxy_names:-none}"
+  if [[ "${proxy_names:-none}" != none ]]; then
+    printf '  Warning: proxy variables are present; endpoint probes do not prove pure TUN capture.\n'
+  fi
+  probe_endpoint 'Anthropic API' 'https://api.anthropic.com' || failures=$((failures + 1))
+  probe_endpoint 'GitHub' 'https://github.com' || failures=$((failures + 1))
+  probe_endpoint 'npm registry' 'https://registry.npmjs.org' || failures=$((failures + 1))
+  if ((failures)); then
+    printf '  Result: degraded (%s endpoint probe(s) failed)\n' "$failures" >&2
+    return 1
+  fi
+  printf '  Result: healthy\n'
 }
 
 main() {
@@ -580,6 +743,7 @@ main() {
   shell)
     parse_mount_options "$@"
     ((${#command_args[@]} == 0)) || die 'usage: claude-code-container shell [--mount SPEC]'
+    [[ -z "$requested_host_cwd" ]] || die 'shell does not accept --cwd'
     check_platform
     initialize_runtime
     run_container zsh

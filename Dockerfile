@@ -9,6 +9,7 @@ ARG DEV_TZ=UTC
 ARG TARGET_NODE_VERSION=24.18.1
 ARG TARGET_PNPM_VERSION=11.21.0
 ARG TARGET_CLAUDE_VERSION=latest
+ARG NODE_DIST_BASE_URL=https://nodejs.org/dist
 ARG PNPM_SHA256=87237d37eadb79dc626a0576eb3a52d23d70422c323ae5e00fc05c91f4323780
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
@@ -49,7 +50,7 @@ RUN set -eux; \
         *) echo 'Only amd64 and arm64 are supported' >&2; exit 1 ;; \
     esac; \
     curl -fsSL --http1.1 --retry 3 --retry-all-errors --connect-timeout 15 -o /tmp/node.tar.xz \
-        "https://nodejs.org/dist/v${TARGET_NODE_VERSION}/node-v${TARGET_NODE_VERSION}-linux-${node_arch}.tar.xz"; \
+        "${NODE_DIST_BASE_URL%/}/v${TARGET_NODE_VERSION}/node-v${TARGET_NODE_VERSION}-linux-${node_arch}.tar.xz"; \
     printf '%s  %s\n' "${node_sha256}" /tmp/node.tar.xz | sha256sum -c -; \
     tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local; \
     corepack enable; \
@@ -79,7 +80,7 @@ RUN set -eux; \
     apt-get "$@" -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends tmux zsh; \
     git init -q /usr/local/share/oh-my-zsh; \
     git -C /usr/local/share/oh-my-zsh remote add origin https://github.com/ohmyzsh/ohmyzsh.git; \
-    git -C /usr/local/share/oh-my-zsh fetch -q --depth 1 origin "${OH_MY_ZSH_COMMIT}"; \
+    git -c http.version=HTTP/1.1 -C /usr/local/share/oh-my-zsh fetch -q --depth 1 origin "${OH_MY_ZSH_COMMIT}"; \
     git -C /usr/local/share/oh-my-zsh checkout -q --detach FETCH_HEAD; \
     test "$(git -C /usr/local/share/oh-my-zsh rev-parse HEAD)" = "${OH_MY_ZSH_COMMIT}"; \
     rm -rf /usr/local/share/oh-my-zsh/.git; \

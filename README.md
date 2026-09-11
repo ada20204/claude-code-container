@@ -62,6 +62,12 @@ The project does not modify `PATH`. Its internal lifecycle launcher lives at
 command lookup; after initialization, `claude-container` is the only
 interactive entry point.
 
+## Guides
+
+- [Run containerized Claude Code with Herdr](./docs/herdr.md): keep Herdr and
+  SSH on the host while Claude Code runs in the container with the correct
+  project working directory.
+
 ## What stays when the container goes away
 
 <p align="center">
@@ -76,7 +82,8 @@ container is disposable. State is divided deliberately:
 - **Host workspace** keeps projects under the host's `~/work` and mounts them
   read-write at `/workspace`; `~/work` inside the container is a symlink to it.
 - **Standard host directories** mount `~/Downloads`, `~/Documents`, `~/Desktop`,
-  and `~/.claude/projects` read-write at the same paths inside the container.
+  `~/.claude/projects`, and `~/.agents` read-write at the same paths inside the
+  container. The host remains authoritative for shared agent skills.
 - **Host network policy** receives normal Docker bridge egress. No proxy URL,
   node, account, or Mihomo configuration is baked into the image.
 - **Disposable runtime** can be removed or rebuilt without moving project data
@@ -116,6 +123,18 @@ claude-container
 # Update Claude Code inside the persistent Home volume.
 claude update
 ```
+
+`doctor` also starts disposable bridge containers to inspect the runtime DNS
+resolver and proxy-variable names, then probes the Anthropic API, GitHub, and
+the npm registry. It retries each endpoint up to three times. No credentials,
+Claude requests, persistent volumes, or proxy settings are used or changed.
+
+When proxy variables are absent, successful probes confirm that the container
+can use the host routing boundary directly, including a host-managed TUN. A
+failure with a `198.18.x.x` DNS answer points first to the Fake-IP/TUN mapping;
+a failure with a normal address points first to the selected host routing or
+proxy-policy group. This distinction avoids adding a permanent container proxy
+to work around a transient host-policy problem.
 
 The build requests the latest Claude Code release by default. Docker may reuse
 the cached Claude installation layer during a rebuild, so `claude update`
@@ -168,6 +187,7 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_DOCUMENTS` | `~/Documents` | Host Documents directory |
 | `CLAUDE_CODE_CONTAINER_DESKTOP` | `~/Desktop` | Host Desktop directory |
 | `CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS` | `~/.claude/projects` | Host Claude project history |
+| `CLAUDE_CODE_CONTAINER_AGENTS` | `~/.agents` | Host-managed shared agent configuration and skills |
 | `CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS` | unset | Comma-separated extra Home directory names to mount at matching paths |
 | `CLAUDE_CODE_CONTAINER_MOUNTS` | unset | Semicolon-separated `HOST_PATH:CONTAINER_PATH[:ro]` custom mounts |
 | `CLAUDE_CODE_CONTAINER_DOCKERFILE` | `~/.local/share/claude-code-container/Dockerfile` | Build input |
@@ -178,7 +198,20 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_BASE_IMAGE` | pinned official Node image | Registry mirror with the same digest |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR` | Debian official | Package mirror |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR` | Debian official | Security package mirror |
+| `CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL` | `https://nodejs.org/dist` | Node.js distribution mirror |
 | `CLAUDE_CODE_CONTAINER_SHELL_RC` | `~/.bashrc` on Linux, `~/.zshrc` on macOS | File receiving the managed alias |
+
+`run` can preserve a host working directory when that directory is covered by
+one of the standard, extra, or custom mounts:
+
+```bash
+"$HOME/.local/share/claude-code-container/claude-code-container" \
+  run --cwd "$PWD" -- claude --resume
+```
+
+The launcher translates the host path to its container mount target and fails
+when the directory is not mounted. It never silently falls back to the
+container Home directory.
 
 Example for a host that needs local mirrors and host networking during build:
 
@@ -189,6 +222,7 @@ node_digest='sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ff
 export CLAUDE_CODE_CONTAINER_BASE_IMAGE="mirror.example/library/node@$node_digest"
 export CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR='https://mirror.example/debian'
 export CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR='https://mirror.example/debian-security'
+export CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL='https://mirror.example/node'
 
 "$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
