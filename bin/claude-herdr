@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+launcher="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$HOME/.local/share/claude-code-container/claude-code-container}"
+instance=1
+if [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; then
+  instance="$1"
+  shift
+elif [[ "${1:-}" == "--instance" ]]; then
+  instance="${2:?claude-herdr --instance requires a number}"
+  shift 2
+elif [[ "${1:-}" == --instance=* ]]; then
+  instance="${1#--instance=}"
+  shift
+fi
+
+[[ "$instance" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'error: instance must be a positive integer\n' >&2
+  exit 1
+}
+
+export HERDR_AGENT=claude
+exec "$launcher" --instance "$instance" run --cwd "$PWD" -- claude "$@"

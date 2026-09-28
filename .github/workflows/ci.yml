@@ -13,8 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck zsh
       - name: Check shell scripts
-        run: shellcheck bin/claude-code-container install.sh tests/test.sh
+        run: shellcheck bin/claude-code-container bin/claude-herdr install.sh tests/*.sh
       - name: Run tests
         run: ./tests/test.sh

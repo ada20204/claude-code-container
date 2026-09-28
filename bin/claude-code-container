@@ -2,9 +2,27 @@
 set -euo pipefail
 
 app_name=claude-code-container
+instance="${CLAUDE_CODE_CONTAINER_INSTANCE:-1}"
+if [[ "${1:-}" == "--instance" ]]; then
+  (($# >= 2)) || { printf 'error: --instance requires a number\n' >&2; exit 1; }
+  instance="$2"
+  shift 2
+elif [[ "${1:-}" == --instance=* ]]; then
+  instance="${1#--instance=}"
+  shift
+fi
+case "$instance" in
+  ''|*[!0-9]*|0) printf 'error: instance must be a positive integer\n' >&2; exit 1 ;;
+esac
 host_os="$(uname -s)"
 image="${CLAUDE_CODE_CONTAINER_IMAGE:-claude-code-container:latest}"
-home_volume="${CLAUDE_CODE_CONTAINER_HOME_VOLUME:-claude-code-container-home}"
+if [[ -n "${CLAUDE_CODE_CONTAINER_HOME_VOLUME:-}" ]]; then
+  home_volume="$CLAUDE_CODE_CONTAINER_HOME_VOLUME"
+elif [[ "$instance" == 1 ]]; then
+  home_volume=claude-code-container-home
+else
+  home_volume="claude-code-container-home-$instance"
+fi
 host_work="${CLAUDE_CODE_CONTAINER_WORKSPACE:-$HOME/work}"
 host_downloads="${CLAUDE_CODE_CONTAINER_DOWNLOADS:-$HOME/Downloads}"
 host_documents="${CLAUDE_CODE_CONTAINER_DOCUMENTS:-$HOME/Documents}"
@@ -41,23 +59,70 @@ else
   container_gid="$(id -g)"
   container_home="/home/$host_user"
 fi
-host_key_comment="claude-code-container:${home_volume}"
+host_key_comment="claude-code-container:instance-${instance}:${home_volume}"
+legacy_host_key_comment="claude-code-container:${home_volume}"
 container_label="io.github.claude-code-container.home-volume=$home_volume"
 
 usage() {
   cat <<'EOF'
-Usage: claude-code-container <command> [ARG...]
+Usage: claude-code-container [--instance N] <command> [ARG...]
+
+Host entry points:
+  The lifecycle launcher is not added to PATH. With the default install path:
+    launcher="$HOME/.local/share/claude-code-container/claude-code-container"
+    "$launcher" help
+  If XDG_DATA_HOME is set, replace ~/.local/share with that directory.
+  claude-container [N]       Enter instance N's shell at its Home; default 1.
+  claude-herdr [N] [ARG...]   Start Claude in the current mounted project.
+                            Optional wrapper; install it using docs/herdr.md.
+  These shortcuts are not lifecycle commands. Use the launcher for maintenance.
 
 Commands:
-  install      Build and initialize the environment, then install the claude-container alias.
-  reinstall    Rebuild and reinstall while preserving persistent Home data.
-  uninstall    Remove runtime integration and image while preserving Home data.
-  clear        Remove the runtime and all persistent Home data (requires confirmation).
+  install      Build the shared image, initialize Home and SSH, install the shell shortcut.
+  reinstall    Rebuild the shared image and replace this instance's runtime; preserve Home.
+  uninstall    Remove this instance's containers and host access; preserve Home data.
+  clear        Also delete this instance's Home data (requires confirmation).
   shell [--mount SPEC]          Enter the persistent Claude Code environment.
   run [--mount SPEC] [--cwd HOST_PATH] -- COMMAND
                                  Run a command in a disposable container.
   doctor       Check prerequisites and current state.
   help         Show this help.
+
+First use (host):
+  Docker and the host SSH server must be running. Prepare the default mounts:
+    mkdir -p ~/work ~/Downloads ~/Documents ~/Desktop ~/.claude/projects ~/.agents
+  After running ./install.sh from the checkout:
+    "$launcher" --instance 1 install
+  Reload the configured shell file: ~/.zshrc on macOS, ~/.bashrc on Linux.
+  For Linux Zsh, set CLAUDE_CODE_CONTAINER_SHELL_RC before installing.
+    claude-container 1
+
+Inside the container:
+    cd ~/work
+    claude          # Complete sign-in on first use of this instance.
+    claude update   # Update this instance's persisted Claude installation.
+    ssh host        # Optional SSH session back to the host.
+  Exit Claude, then exit the shell to return to the host; Home data persists.
+
+Host maintenance examples:
+    "$launcher" --instance 2 install
+    "$launcher" --instance 2 doctor
+    "$launcher" --instance 2 reinstall
+    "$launcher" --instance 2 uninstall
+    "$launcher" --instance 2 clear          # Deletes this Home after confirmation.
+  clear --yes skips the confirmation. Use it only for intentional data deletion.
+
+Instances:
+  An instance number identifies a persistent Home, not a permanent container.
+  Each shell/run invocation creates a disposable runtime; the number reuses Home.
+  By default Home, login state and host SSH keys are separate per instance.
+  Shared read-write paths: ~/work -> /workspace; ~/Downloads, ~/Documents,
+  ~/Desktop, ~/.claude/projects and ~/.agents -> matching container Home paths.
+  Reusing CLAUDE_CODE_CONTAINER_HOME_VOLUME or mounting the full host .claude
+  defeats login isolation.
+  Uninstall and clear retain the shared image, shell entry and host-mounted files.
+  Reinstall stops this instance's containers, not other instances' containers.
+  Rebuilding the shared image affects future starts; retained Home data stays.
 
 Mount syntax:
   --mount HOST_PATH:CONTAINER_PATH[:ro]
@@ -65,7 +130,9 @@ Mount syntax:
 
 Working directory:
   --cwd HOST_PATH
-  Start COMMAND in the corresponding mounted container directory.
+  Only for run: translate a mounted host directory, or fail if it is not mounted.
+    "$launcher" --instance 2 run --cwd "$PWD" -- claude --resume
+  shell always starts in Home. See README.md for configuration and networking.
 EOF
 }
 
@@ -295,12 +362,14 @@ install_host_authorization() {
   touch "$HOME/.ssh/authorized_keys"
   chmod 600 "$HOME/.ssh/authorized_keys"
   authorized_line="from=\"$subnet\",no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc $public_key"
-  if ! grep -Fqx "$authorized_line" "$HOME/.ssh/authorized_keys"; then
+  if ! grep -Fqx "$authorized_line" "$HOME/.ssh/authorized_keys" ||
+    awk -v legacy="$legacy_host_key_comment" '$NF == legacy { found=1 } END { exit !found }' "$HOME/.ssh/authorized_keys"; then
     backup="$HOME/.ssh/authorized_keys.backup-before-$app_name-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     cp -p "$HOME/.ssh/authorized_keys" "$backup"
     stage="$(mktemp "$HOME/.ssh/authorized_keys.$app_name.XXXXXX")"
     trap 'rm -f "$stage"' EXIT
-    awk -v comment="$host_key_comment" '$NF != comment' "$HOME/.ssh/authorized_keys" > "$stage"
+    awk -v comment="$host_key_comment" -v legacy="$legacy_host_key_comment" \
+      '$NF != comment && $NF != legacy' "$HOME/.ssh/authorized_keys" > "$stage"
     printf '%s\n' "$authorized_line" >> "$stage"
     chmod 600 "$stage"
     mv "$stage" "$HOME/.ssh/authorized_keys"
@@ -339,7 +408,7 @@ import shlex
 import sys
 
 path = Path(sys.argv[1])
-start, end, alias_name, launcher_path, extra_home_dirs, custom_mounts = sys.argv[2:]
+start, end, command_name, launcher_path, extra_home_dirs, custom_mounts = sys.argv[2:]
 text = path.read_text()
 if start in text or end in text:
     before, separator, remainder = text.partition(start)
@@ -348,8 +417,9 @@ if start in text or end in text:
     _, _, after = remainder.partition(end)
     text = (before.rstrip() + "\n" + after.lstrip()).strip()
 for line in text.splitlines():
-    if line.strip().startswith(f"alias {alias_name}="):
-        raise SystemExit(f"Conflicting alias {alias_name} in {path}")
+    stripped = line.strip()
+    if stripped.startswith(f"alias {command_name}=") or stripped.startswith(f"{command_name}()"):
+        raise SystemExit(f"Conflicting command {command_name} in {path}")
 lines = [start]
 if extra_home_dirs:
     lines.append(
@@ -359,7 +429,18 @@ if custom_mounts:
     lines.append(
         "export CLAUDE_CODE_CONTAINER_MOUNTS=" + shlex.quote(custom_mounts)
     )
-lines.extend([f"alias {alias_name}={shlex.quote(launcher_path + ' shell')}", end])
+lines.extend([
+    f"unalias {shlex.quote(command_name)} 2>/dev/null || true",
+    f"{command_name}() {{",
+    "  local instance=1",
+    "  if [[ \"${1:-}\" =~ ^[1-9][0-9]*$ ]]; then",
+    "    instance=\"$1\"",
+    "    shift",
+    "  fi",
+    f"  {shlex.quote(launcher_path)} --instance \"$instance\" shell \"$@\"",
+    "}",
+    end,
+])
 block = "\n".join(lines)
 path.write_text((text.rstrip() + "\n\n" if text else "") + block + "\n")
 PY
@@ -391,12 +472,14 @@ remove_host_authorization() {
   local file stage backup
   file="$HOME/.ssh/authorized_keys"
   [[ -f "$file" ]] || return 0
-  if awk -v comment="$host_key_comment" '$NF == comment { found=1 } END { exit !found }' "$file"; then
+  if awk -v comment="$host_key_comment" -v legacy="$legacy_host_key_comment" \
+    '$NF == comment || $NF == legacy { found=1 } END { exit !found }' "$file"; then
     backup="$file.backup-before-$app_name-uninstall-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     cp -p "$file" "$backup"
     stage="$(mktemp "$file.$app_name.XXXXXX")"
     trap 'rm -f "$stage"' EXIT
-    awk -v comment="$host_key_comment" '$NF != comment' "$file" > "$stage"
+    awk -v comment="$host_key_comment" -v legacy="$legacy_host_key_comment" \
+      '$NF != comment && $NF != legacy' "$file" > "$stage"
     chmod 600 "$stage"
     mv "$stage" "$file"
     trap - EXIT
@@ -404,12 +487,12 @@ remove_host_authorization() {
 }
 
 remove_runtime() {
-  local container_id
+  local container_id container_ids
+  container_ids="$(docker ps -aq --filter "label=$container_label")" || \
+    die 'could not list instance containers; no resources were removed'
   while IFS= read -r container_id; do
     [[ -n "$container_id" ]] && docker rm -f "$container_id" >/dev/null
-  done < <(docker ps -aq --filter "label=$container_label")
-  docker image inspect "$image" >/dev/null 2>&1 && docker image rm "$image" >/dev/null
-  remove_alias
+  done <<< "$container_ids"
   remove_host_authorization
 }
 
@@ -451,6 +534,11 @@ append_custom_mount() {
   case "$target" in
     *:*|*//*|*/./*|*/.|*/../*|*/..) die "mount target must be a normalized path: $target" ;;
   esac
+  # Equivalent .agents bindings must not add a duplicate Docker mount.
+  if [[ "$target" == "$container_home/.agents" && "$mode" == rw && -d "$source" && -d "$host_agents" ]] &&
+    [[ "$(cd "$source" && pwd -P)" == "$(cd "$host_agents" && pwd -P)" ]]; then
+    return
+  fi
   case "$target" in
     /|/workspace|"$container_home"|"$container_home/Downloads"|"$container_home/Documents"|"$container_home/Desktop"|"$container_home/.claude/projects"|"$container_home/.agents")
       die "mount target is managed by claude-code-container: $target"
@@ -560,7 +648,10 @@ run_container() {
     for extra_dir in "${extra_dirs[@]}"; do
       case "$extra_dir" in
         ''|.|..|*/*|*[^a-zA-Z0-9._-]*) die "invalid extra Home directory name: $extra_dir" ;;
-        .agents) die '.agents is a standard claude-code-container mount; remove it from CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' ;;
+        .agents)
+          append_custom_mount "$HOME/.agents:$container_home/.agents"
+          continue
+          ;;
       esac
       [[ -d "$HOME/$extra_dir" ]] || die "extra host directory does not exist: $HOME/$extra_dir"
       run_args+=(--volume "$HOME/$extra_dir:$container_home/$extra_dir")
@@ -729,7 +820,8 @@ main() {
     (($# == 0)) || die 'uninstall does not accept arguments'
     check_platform
     remove_runtime
-    printf 'Uninstalled. Persistent Home volume preserved: %s\n' "$home_volume"
+    printf 'Uninstalled instance %s. Persistent Home volume preserved: %s\n' "$instance" "$home_volume"
+    printf 'Shared image and shell entry point preserved.\n'
     ;;
   clear)
     (($# <= 1)) || die 'usage: claude-code-container clear [--yes]'
@@ -738,7 +830,8 @@ main() {
     confirm_clear "${1:-}"
     remove_runtime
     docker volume inspect "$home_volume" >/dev/null 2>&1 && docker volume rm "$home_volume" >/dev/null
-    printf 'Cleared image, Home data, alias, host authorization, and related containers.\n'
+    printf 'Cleared instance %s: Home data, host authorization, and related containers.\n' "$instance"
+    printf 'Shared image and shell entry point preserved.\n'
     ;;
   shell)
     parse_mount_options "$@"

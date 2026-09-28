@@ -3,7 +3,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bash -n "$root/bin/claude-code-container" "$root/install.sh"
+for script in "$root/bin/claude-code-container" "$root/bin/claude-herdr" "$root/install.sh" "$root"/tests/*.sh; do
+  bash -n "$script"
+done
 
 if grep -RIn --exclude-dir=.git 'claude-code-dev' "$root/.github" "$root/bin" "$root/install.sh"; then
   printf 'stale pre-rename command found\n' >&2
@@ -47,6 +49,9 @@ grep -Fq "printf '%s\\n' '127.0.0.1/32'" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_CLAUDE_PROJECTS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_AGENTS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_AGENTS' "$root/README.md"
+grep -Fq 'HERDR_AGENT=claude' "$root/bin/claude-herdr"
+# shellcheck disable=SC2016
+grep -Fq -- '--cwd "$PWD"' "$root/bin/claude-herdr"
 grep -Fq -- "--volume \"\$host_agents:\$container_home/.agents\"" "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_EXTRA_HOME_DIRS' "$root/bin/claude-code-container"
 grep -Fq 'CLAUDE_CODE_CONTAINER_MOUNTS' "$root/bin/claude-code-container"
@@ -83,10 +88,25 @@ printf 'export USER_SETTING=keep\n' > "$tmp/function-home/.bashrc"
   install_alias
   install_alias
   test "$(grep -c '^# claude-code-container: shell alias begin$' "$HOME/.bashrc")" -eq 1
-  grep -Fq "alias claude-container='$HOME/.local/share/claude-code-container/claude-code-container shell'" "$HOME/.bashrc"
+  grep -Fq 'claude-container() {' "$HOME/.bashrc"
+  # shellcheck disable=SC2016
+  grep -Fq -- '--instance "$instance" shell "$@"' "$HOME/.bashrc"
   remove_alias
   grep -q '^export USER_SETTING=keep$' "$HOME/.bashrc"
   ! grep -q 'claude-code-container: shell alias' "$HOME/.bashrc"
+)
+
+mkdir -p "$tmp/instance-home"
+(
+  export HOME="$tmp/instance-home"
+  export CLAUDE_CODE_CONTAINER_SHELL_RC="$HOME/.bashrc"
+  # shellcheck disable=SC1091
+  source "$root/bin/claude-code-container" --instance 2
+  test "$instance" = 2
+  test "$home_volume" = claude-code-container-home-2
+  test "$shell_alias" = claude-container
+  install_alias
+  grep -Fq 'claude-container() {' "$HOME/.bashrc"
 )
 
 mkdir -p "$tmp/extra-home"
@@ -216,4 +236,5 @@ mkdir -p "$tmp/network-doctor-home"
   grep -Fq 'Result: healthy' <<<"$network_output"
 )
 
-printf 'Static and installer tests passed.\n'
+bash "$root/tests/regressions.sh"
+printf 'Static, installer, and regression tests passed.\n'

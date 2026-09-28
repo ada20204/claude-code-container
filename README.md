@@ -23,44 +23,113 @@ projects on the host; let the host decide how network traffic is routed.
 
 - Linux on `amd64` or `arm64`, or Apple Silicon macOS with OrbStack
 - Docker Engine available to the current user without `sudo`; on macOS it is provided by OrbStack
-- Bash, Python 3, and an OpenSSH server
+- Bash, Python 3, and a running host OpenSSH server; on macOS, enable Remote Login
 - A writable `~/.ssh/authorized_keys`
-- A host workspace at `~/work`, or a custom `CLAUDE_CODE_CONTAINER_WORKSPACE`
+- Existing directories for all configured mounts; the default preparation is shown below
 
-### Install
+### Choose the entry point
+
+| Where | Entry | Purpose |
+| --- | --- | --- |
+| Host | `claude-container [N]` | Enter instance `N`'s shell at its Home; default `1` |
+| Host | `claude-herdr [N] [CLAUDE_ARGS...]` | Start Claude directly in the current mounted project; optional wrapper |
+| Host | `"$HOME/.local/share/claude-code-container/claude-code-container" [--instance N] <command>` | Install, rebuild, inspect, uninstall, clear, or show help |
+| Container | `claude` or `claude update` | Run/sign in to Claude, or update this instance's installation |
+
+The project does not add its internal launcher to `PATH`. `claude-container`
+is a shell shortcut implemented as a function, not a second lifecycle CLI:
+use the full launcher path for `help`, `doctor`, `reinstall`, `uninstall`, and
+`clear`. Examples use the default data directory; if `XDG_DATA_HOME` is set,
+replace `$HOME/.local/share` with that directory.
+
+### Install on the host
+
+On Linux with Zsh, export `CLAUDE_CODE_CONTAINER_SHELL_RC="$HOME/.zshrc"`
+before running the installation commands. Linux otherwise defaults to `.bashrc`;
+macOS defaults to `.zshrc`.
 
 ```bash
 git clone https://github.com/ada20204/claude-code-container.git
 cd claude-code-container
+mkdir -p "$HOME/work" "$HOME/Downloads" "$HOME/Documents" "$HOME/Desktop" \
+  "$HOME/.claude/projects" "$HOME/.agents"
 ./install.sh
-"$HOME/.local/share/claude-code-container/claude-code-container" install
-source ~/.bashrc  # Linux
-# source ~/.zshrc # macOS
+"$HOME/.local/share/claude-code-container/claude-code-container" --instance 1 install
 ```
 
-Enter the environment:
+If using custom mount sources, create those directories instead and set their
+configuration variables before installation. `.agents` is created automatically
+when missing; other required directories are not. The default time zone is
+`UTC`; set `CLAUDE_CODE_CONTAINER_TIMEZONE=America/Chicago` before `install` to
+build for Chicago.
+
+Reload the host shell configuration for your platform. On macOS with Zsh
+(or Linux with the Zsh override above):
 
 ```bash
-claude-container
+source ~/.zshrc
 ```
 
-The default directory matches the host user's Home path: `/home/<user>` on
-Linux and `/Users/<user>` on macOS. Projects are available at
-both `~/work` and `/workspace`. From inside the container, return to the host
-with the generated key:
+On Linux with Bash:
 
 ```bash
-ssh host
+source ~/.bashrc
 ```
 
-Installation stops instead of replacing a conflicting `Host host` entry,
-`claude-container` alias, or `~/work` path. It reports success only after a real
-non-interactive SSH connection back to the host succeeds.
+Installation reports success only after an actual non-interactive SSH
+connection back to the host succeeds.
+Conflicting user-defined shell entries, `Host host` entries, or `~/work` paths
+are reported instead of overwritten.
 
-The project does not modify `PATH`. Its internal lifecycle launcher lives at
-`~/.local/share/claude-code-container/claude-code-container`, outside normal
-command lookup; after initialization, `claude-container` is the only
-interactive entry point.
+### Enter and sign in
+
+On the host:
+
+```bash
+claude-container 1
+```
+
+Inside the container, start Claude and complete its sign-in prompts:
+
+```bash
+cd ~/work
+claude
+```
+
+The shell starts in Home, not in the host's current project. Home matches the
+host user's path: `/home/<user>` on Linux and `/Users/<user>` on macOS.
+`~/work` links to `/workspace`. Exit Claude, then exit the container shell to
+return to the host; the disposable runtime is removed, but Home data persists.
+Inside the container, `ssh host` opens a separate host SSH session with the
+generated key. Exit that SSH session to return to the container.
+
+### Use another instance
+
+On the host, prepare and enter instance 2:
+
+```bash
+"$HOME/.local/share/claude-code-container/claude-code-container" --instance 2 install
+claude-container 2
+```
+
+An instance number identifies its persistent Home, not a permanent Docker
+container. Reusing the number reuses its login and tools; another number gets
+a separate Home by default. Complete sign-in separately in each new instance.
+All instances share the image and the configured host-mounted directories.
+Do not reuse `CLAUDE_CODE_CONTAINER_HOME_VOLUME` across instances or mount the
+full host `~/.claude` if login isolation is required.
+
+To start Claude directly from a host project, install the optional wrapper
+using the [Herdr guide](./docs/herdr.md#install-the-host-wrapper), then run on
+the host:
+
+```bash
+cd ~/work/example  # An existing project covered by a mount
+claude-herdr 2 --resume
+```
+
+Omit `--resume` for a new conversation. The wrapper preserves the mapped
+project directory; unlike `claude-container`, it does not start a Home shell.
 
 ## Guides
 
@@ -78,12 +147,14 @@ The image contains Claude Code and the development toolbox. The running
 container is disposable. State is divided deliberately:
 
 - **Persistent Home** stores Claude login state, `~/.claude/CLAUDE.md`, the
-  container-to-host SSH key, and user-level tools under `~/.local`.
+  container-to-host SSH key, and user-level tools under `~/.local`. Each
+  numeric instance has a separate Home volume.
 - **Host workspace** keeps projects under the host's `~/work` and mounts them
   read-write at `/workspace`; `~/work` inside the container is a symlink to it.
 - **Standard host directories** mount `~/Downloads`, `~/Documents`, `~/Desktop`,
   `~/.claude/projects`, and `~/.agents` read-write at the same paths inside the
-  container. The host remains authoritative for shared agent skills.
+  container. Only `~/.claude/projects` is shared from Claude's state directory;
+  the rest of `~/.claude` stays inside the instance Home volume.
 - **Host network policy** receives normal Docker bridge egress. No proxy URL,
   node, account, or Mihomo configuration is baked into the image.
 - **Disposable runtime** can be removed or rebuilt without moving project data
@@ -113,14 +184,16 @@ containers still use the Docker bridge.
 
 ## Daily workflow
 
+On the host, inspect an instance or enter its shell:
+
 ```bash
-# Enter the persistent environment.
-claude-container
+"$HOME/.local/share/claude-code-container/claude-code-container" --instance 1 doctor
+claude-container 1
+```
 
-# Inspect prerequisites and managed resources.
-"$HOME/.local/share/claude-code-container/claude-code-container" doctor
+Inside the container, update the persisted Claude installation:
 
-# Update Claude Code inside the persistent Home volume.
+```bash
 claude update
 ```
 
@@ -144,17 +217,44 @@ reproducible builds matter more than receiving the latest release.
 
 ## Lifecycle
 
-| Command | Image and integration | Persistent Home |
+Run lifecycle commands on the host, not inside the container. For example:
+
+```bash
+launcher="$HOME/.local/share/claude-code-container/claude-code-container"
+"$launcher" help
+"$launcher" --instance 2 reinstall
+```
+
+| Command | Instance runtime | Persistent Home |
 | --- | --- | --- |
 | `~/.local/share/claude-code-container/claude-code-container install` | Build and initialize | Create or reuse |
 | `~/.local/share/claude-code-container/claude-code-container reinstall` | Rebuild and repair | Preserve |
-| `~/.local/share/claude-code-container/claude-code-container uninstall` | Remove | Preserve |
-| `~/.local/share/claude-code-container/claude-code-container clear` | Remove | Delete after confirmation |
-| `~/.local/share/claude-code-container/claude-code-container clear --yes` | Remove | Delete without prompting |
+| `~/.local/share/claude-code-container/claude-code-container uninstall` | Remove containers and host SSH access | Preserve |
+| `~/.local/share/claude-code-container/claude-code-container clear` | Remove containers and host SSH access | Delete after confirmation |
+| `~/.local/share/claude-code-container/claude-code-container clear --yes` | Remove containers and host SSH access | Delete without prompting |
 
-`reinstall` builds a replacement image before removing the current managed
-runtime. `clear` is destructive: it removes Claude login state, user-installed
-tools, container SSH material, and every other file in the named Home volume.
+`reinstall` builds a replacement image before stopping the selected instance's
+containers and repairing its integration. `clear` is destructive: it removes
+Claude login state, user-installed tools, container SSH material, and every
+other file in the named Home volume.
+Add `--instance N` before the command to select an instance. The shared image
+and `claude-container` shell entry point survive `uninstall` and `clear`, so
+other instances remain usable. Rebuilding replaces the shared image for future
+starts; existing containers of other instances are not stopped.
+Host-mounted projects, histories and skills are never deleted by these commands.
+To delete just instance 2's Home, run on the host:
+
+```bash
+"$HOME/.local/share/claude-code-container/claude-code-container" --instance 2 clear
+```
+
+This prompts before deletion. Add `--yes` only when intentionally automating
+permanent deletion. Entering the same number again recreates a fresh Home after
+`clear`, or reuses its retained Home after `uninstall`, and restores SSH access.
+
+An older explicit `.agents` mount is accepted when its source matches the
+standard mount and it is read-write. Conflicting sources or read-only overrides
+still fail instead of silently changing access permissions.
 
 ## Included toolbox
 
@@ -181,7 +281,8 @@ parts owned by the local host:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CLAUDE_CODE_CONTAINER_IMAGE` | `claude-code-container:latest` | Managed Docker image |
-| `CLAUDE_CODE_CONTAINER_HOME_VOLUME` | `claude-code-container-home` | Persistent Home volume |
+| `CLAUDE_CODE_CONTAINER_INSTANCE` | `1` | Default instance for the lifecycle launcher; shortcuts use their numeric argument or `1` |
+| `CLAUDE_CODE_CONTAINER_HOME_VOLUME` | `claude-code-container-home` for instance 1, `claude-code-container-home-N` otherwise | Persistent Home volume for instance `N` |
 | `CLAUDE_CODE_CONTAINER_WORKSPACE` | `~/work` | Host project directory |
 | `CLAUDE_CODE_CONTAINER_DOWNLOADS` | `~/Downloads` | Host Downloads directory |
 | `CLAUDE_CODE_CONTAINER_DOCUMENTS` | `~/Documents` | Host Documents directory |
@@ -199,7 +300,7 @@ parts owned by the local host:
 | `CLAUDE_CODE_CONTAINER_DEBIAN_MIRROR` | Debian official | Package mirror |
 | `CLAUDE_CODE_CONTAINER_DEBIAN_SECURITY_MIRROR` | Debian official | Security package mirror |
 | `CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL` | `https://nodejs.org/dist` | Node.js distribution mirror |
-| `CLAUDE_CODE_CONTAINER_SHELL_RC` | `~/.bashrc` on Linux, `~/.zshrc` on macOS | File receiving the managed alias |
+| `CLAUDE_CODE_CONTAINER_SHELL_RC` | `~/.bashrc` on Linux, `~/.zshrc` on macOS | File receiving the managed shell shortcut |
 
 `run` can preserve a host working directory when that directory is covered by
 one of the standard, extra, or custom mounts:
@@ -213,7 +314,7 @@ The launcher translates the host path to its container mount target and fails
 when the directory is not mounted. It never silently falls back to the
 container Home directory.
 
-Example for a host that needs local mirrors and host networking during build:
+Example for a Linux host that needs local mirrors and host networking during build:
 
 ```bash
 export CLAUDE_CODE_CONTAINER_TIMEZONE=America/Chicago
@@ -227,22 +328,30 @@ export CLAUDE_CODE_CONTAINER_NODE_DIST_BASE_URL='https://mirror.example/node'
 "$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
-When a host requires a proxy only while building, export the standard proxy
-variables before installation. They are passed to Docker as build arguments and
-are not retained in the final image:
+When a host requires a proxy only while building, pass standard proxy variables
+for that invocation. They become Docker build arguments, not persistent image
+settings. For macOS with OrbStack, use its container-reachable host name and
+replace the example port with the actual proxy port:
 
 ```bash
-export HTTPS_PROXY='http://127.0.0.1:7890'
-export HTTP_PROXY="$HTTPS_PROXY"
-export NO_PROXY='localhost,127.0.0.1,host.docker.internal'
-"$HOME/.local/share/claude-code-container/claude-code-container" install
+HTTP_PROXY='http://host.docker.internal:7890' \
+HTTPS_PROXY='http://host.docker.internal:7890' \
+  "$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
+In a default bridge build, `127.0.0.1` means the build container itself, not
+the Mac. On Linux, a loopback-only host proxy requires
+`CLAUDE_CODE_CONTAINER_BUILD_NETWORK=host`; otherwise use a proxy address
+reachable from the build network. On macOS, host networking refers to the
+Docker VM, so it is not a substitute for reaching the Mac through OrbStack.
+These build settings do not configure runtime proxy variables or change TUN.
+
 When the official release host is unavailable or rate-limited, an existing
-trusted Claude Code binary can seed the image without being mounted at runtime:
+trusted Linux Claude Code binary for the target CPU architecture can seed the
+image without being mounted at runtime:
 
 ```bash
-export CLAUDE_CODE_CONTAINER_CLAUDE_BINARY="$(command -v claude)"
+export CLAUDE_CODE_CONTAINER_CLAUDE_BINARY='/absolute/path/to/linux-arm64/claude'
 "$HOME/.local/share/claude-code-container/claude-code-container" install
 ```
 
@@ -250,6 +359,7 @@ The seed is copied into a temporary build context, checked by running
 `--version`, and then stored inside the image. It bypasses the official
 download and its checksum manifest, so only use a locally trusted executable.
 Run `claude update` inside the container later to move to a newer release.
+A native macOS executable cannot be used as the Linux binary seed.
 
 Host-specific directories stay outside the public defaults. For example:
 
@@ -262,7 +372,7 @@ For paths that do not belong at matching Home locations, pass one or more
 custom mounts for a single invocation:
 
 ```bash
-claude-code-container shell \
+claude-container 1 \
   --mount "$HOME/data:/data:ro" \
   --mount "$HOME/client-project:/projects/client"
 ```
@@ -276,7 +386,7 @@ export CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/data:/data:ro;$HOME/client-project:/p
 ```
 
 `install` records the configured value in the managed shell block, so the
-`claude-container` alias reuses it. Source paths must exist, targets must be
+`claude-container` shell shortcut reuses it. Source paths must exist, targets must be
 absolute, and custom mounts cannot replace the managed Home, workspace, or
 standard directory targets. A read-write mount exposes those host files to
 commands running in the container; prefer `:ro` when writes are unnecessary.
@@ -303,11 +413,17 @@ code.
 ## Development
 
 ```bash
-shellcheck bin/claude-code-container install.sh tests/test.sh
+shellcheck bin/claude-code-container bin/claude-herdr install.sh tests/*.sh
 ./tests/test.sh
 ```
 
 CI runs the same ShellCheck and installer tests on every push and pull request.
+For a real Docker test on a configured Linux host or macOS with OrbStack, run
+`bash tests/docker-smoke.sh`. It builds a separate test image, creates two
+temporary instances and temporary shared directories, and tests SSH access to
+the host. It adds and removes only its own host public keys and cleans up the
+test image and volumes; existing login state and project directories are not
+mounted. The host SSH server must already be available.
 
 ## License
 

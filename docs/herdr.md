@@ -23,7 +23,8 @@ is unnecessary for this integration.
 
 ## Prerequisites
 
-- `claude-code-container` is installed on the development host.
+- `claude-code-container` and the desired numbered instance are initialized
+  on the development host; follow the [README quick start](../README.md#start-here).
 - Herdr is installed and its server is running on the development host.
 - The controlling machine can connect to the development host with SSH public
   key authentication.
@@ -40,28 +41,37 @@ herdr status server
 
 ## Install the host wrapper
 
-Create `~/.local/bin/claude-herdr` on the development host:
+On the development host, run from the `claude-code-container` repository
+checkout. Install the maintained script instead of creating another copy of
+its implementation:
 
 ```bash
 install -d "$HOME/.local/bin"
-cat >"$HOME/.local/bin/claude-herdr" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-launcher="${CLAUDE_CODE_CONTAINER_LAUNCHER:-$HOME/.local/share/claude-code-container/claude-code-container}"
-export HERDR_AGENT=claude
-exec "$launcher" run --cwd "$PWD" -- claude "$@"
-EOF
-chmod 755 "$HOME/.local/bin/claude-herdr"
+install -m 0755 ./bin/claude-herdr "$HOME/.local/bin/claude-herdr"
 ```
 
-Ensure `~/.local/bin` is in the interactive shell's `PATH`, then verify the
-wrapper without starting an interactive session:
+The base `install.sh` does not install this optional wrapper. Repeat the copy
+after updating the checkout. No extra entry is needed for each instance.
+Ensure `~/.local/bin` is already on the host shell's `PATH`, or use the full
+`~/.local/bin/claude-herdr` path. Neither installer adds this directory to PATH.
+If the launcher was installed under a custom `XDG_DATA_HOME`, export
+`CLAUDE_CODE_CONTAINER_LAUNCHER` with its actual absolute path before using
+the wrapper.
+
+On the host, verify from a mounted directory without opening an interactive
+Claude conversation (this still initializes and starts a disposable container):
 
 ```bash
 command -v claude-herdr
-claude-herdr --version
+cd ~/work
+claude-herdr 1 --version
 ```
+
+Use `claude-herdr N [CLAUDE_ARGS...]` to select an instance; omitting `N` selects
+`1`. `--instance N` is also accepted. All remaining arguments go to Claude,
+so `claude-herdr --help` shows Claude's help, not container maintenance help.
+For installation or cleanup, use the full lifecycle launcher path described
+in the README. The wrapper does not install or start the Herdr server.
 
 ## Preserve the project directory
 
@@ -81,12 +91,15 @@ A same-path custom mount keeps its absolute path:
 ```bash
 export CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/mywork:$HOME/mywork"
 cd "$HOME/mywork/example"
-claude-herdr --resume
+claude-herdr 2 --resume
 ```
 
 In this example, Claude Code starts in `~/mywork/example` inside the container.
 If the current host directory is not covered by a container mount, the launcher
 stops with an error instead of silently starting in the container Home.
+Omit `--resume` for a new conversation. On first use of an instance, complete
+its Claude sign-in prompts. `claude-container N` instead opens a shell in Home;
+it does not preserve the host project directory.
 
 ## Add the development host to another Herdr machine
 
@@ -128,11 +141,12 @@ project directory:
 
 ```bash
 cd ~/work/example
-claude-herdr --resume
+claude-herdr 1 --resume
 ```
 
 Herdr can now identify the host pane as a Claude agent while the actual Claude
-process and development tools remain inside the container.
+process and development tools remain inside the numbered container. Register
+the Host once; use a different Herdr pane or session for each instance.
 
 ## Verify the integration
 
@@ -141,12 +155,12 @@ Run these checks from the development host:
 ```bash
 cd ~/work/example
 "$HOME/.local/share/claude-code-container/claude-code-container" \
-  run --cwd "$PWD" -- pwd
-claude-herdr --version
+  --instance 1 run --cwd "$PWD" -- pwd
+claude-herdr 1 --version
 ```
 
 The first command should print `/workspace/example`. In a Herdr session, start
-`claude-herdr`, then inspect the registered agents from another pane:
+`claude-herdr 1`, then inspect the registered agents from another pane:
 
 ```bash
 herdr agent list
@@ -156,14 +170,10 @@ herdr agent list
 
 ### Claude starts in Home
 
-Confirm the wrapper includes both `--cwd "$PWD"` and the argument separator
-before `claude`:
-
-```bash
-exec "$launcher" run --cwd "$PWD" -- claude "$@"
-```
-
-Also confirm that the deployed launcher supports `run --cwd`.
+Check `command -v claude-herdr`, then reinstall `bin/claude-herdr` using the
+copy command above. The maintained wrapper passes `--instance`, `--cwd "$PWD"`,
+and `-- claude` to the launcher. Also confirm that the deployed launcher
+supports `run --cwd`; update it with `./install.sh` from the same checkout.
 
 ### The directory is not covered by a mount
 
@@ -173,7 +183,7 @@ host wrapper, so a one-off invocation can declare a mount without changing the
 script:
 
 ```bash
-CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/project:$HOME/project" claude-herdr
+CLAUDE_CODE_CONTAINER_MOUNTS="$HOME/project:$HOME/project" claude-herdr 1
 ```
 
 Do not mount the entire host Home directory merely to avoid declaring the
